@@ -216,8 +216,9 @@ class RecorderManager:
     ) -> Tuple[list[str], Optional[Tuple[int, int, int, int]]]:
         command = [
             "ffmpeg",
+            "-hide_banner",
             "-loglevel",
-            "info",
+            settings.FFMPEG_LOGLEVEL,
             "-fflags",
             "nobuffer",
             "-flags",
@@ -239,25 +240,30 @@ class RecorderManager:
             x, y, width, height = crop_box
             filters.append(f"crop={width}:{height}:{x}:{y}")
 
+        if settings.FFMPEG_SCALE_WIDTH:
+            filters.append(f"scale={settings.FFMPEG_SCALE_WIDTH}:-1")
+
         if filters:
             command.extend(["-vf", ",".join(filters)])
-            encoder = settings.FFMPEG_CROP_ENCODER or "libx264"
-            command.extend(["-c:v", encoder])
-            preset = settings.FFMPEG_CROP_PRESET
-            pixel_format = settings.FFMPEG_CROP_PIXEL_FORMAT
-            if encoder == "libx264":
-                if preset:
-                    command.extend(["-preset", preset])
-                command.extend(["-crf", str(settings.FFMPEG_CROP_CRF)])
-                if pixel_format:
-                    command.extend(["-pix_fmt", pixel_format])
-            else:
-                if preset:
-                    command.extend(["-preset", preset])
-                if pixel_format:
-                    command.extend(["-pix_fmt", pixel_format])
-        else:
-            command.extend(["-c", "copy"])
+
+        encoder = settings.FFMPEG_ENCODER or "libx264"
+        command.extend(["-c:v", encoder])
+
+        preset = settings.FFMPEG_PRESET
+        if preset:
+            command.extend(["-preset", preset])
+
+        tune = settings.FFMPEG_TUNE
+        if encoder == "libx264" and tune:
+            command.extend(["-tune", tune])
+
+        crf = settings.FFMPEG_CRF
+        if encoder == "libx264" and crf is not None:
+            command.extend(["-crf", str(crf)])
+
+        pixel_format = settings.FFMPEG_PIXEL_FORMAT
+        if pixel_format:
+            command.extend(["-pix_fmt", pixel_format])
 
         command.extend(
             [

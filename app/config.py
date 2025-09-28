@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
 
 class Settings:
@@ -31,11 +32,15 @@ class Settings:
         f"http://127.0.0.1:{USTREAMER_PORT}/stream",
     )
 
-    FFMPEG_CROP_ENCODER: str = os.getenv("MINIDVR_CROP_ENCODER", "libx264")
-    FFMPEG_CROP_PRESET: str = os.getenv("MINIDVR_CROP_PRESET", "veryfast")
-    FFMPEG_CROP_CRF: int = int(os.getenv("MINIDVR_CROP_CRF", "20"))
-    FFMPEG_CROP_PIXEL_FORMAT: str = os.getenv(
-        "MINIDVR_CROP_PIX_FMT", "yuv420p"
+    FFMPEG_LOGLEVEL: str = os.getenv("MINIDVR_FFMPEG_LOGLEVEL", "warning")
+    FFMPEG_SCALE_WIDTH: int = int(os.getenv("MINIDVR_SCALE_WIDTH", "640"))
+    FFMPEG_ENCODER: str = os.getenv("MINIDVR_ENCODER", "libx264")
+    FFMPEG_PRESET: str = os.getenv("MINIDVR_ENCODER_PRESET", "ultrafast")
+    FFMPEG_TUNE: str = os.getenv("MINIDVR_ENCODER_TUNE", "zerolatency")
+    FFMPEG_PIXEL_FORMAT: str = os.getenv("MINIDVR_ENCODER_PIX_FMT", "yuv420p")
+    _ffmpeg_crf_env = os.getenv("MINIDVR_ENCODER_CRF")
+    FFMPEG_CRF: Optional[int] = (
+        int(_ffmpeg_crf_env) if _ffmpeg_crf_env is not None else None
     )
 
     LOG_LEVEL: str = os.getenv("MINIDVR_LOG_LEVEL", "INFO")

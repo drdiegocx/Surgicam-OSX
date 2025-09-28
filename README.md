@@ -141,8 +141,25 @@ Ajusta la ruta al repositorio según tu despliegue.
 
 - La vista previa permanece activa aun cuando las grabaciones se inician o detienen.
 - Los segmentos MP4 incluyen `moov` al inicio (`+faststart`) y rotan cada 10 minutos.
-- Cuando el ROI ocupa el cuadro completo, FFmpeg copia el flujo MJPEG sin recodificar y el uso de CPU se mantiene mínimo.
-- Si el ROI reduce el campo de visión, FFmpeg aplica `crop` y vuelve a codificar con `libx264` (parámetros configurables).
+- FFmpeg limpia la señal MJPEG con `scale=640:-1` antes de codificar a H.264 (`libx264`), garantizando compatibilidad plena con reproductores HTML5 y conservando baja latencia.
+- Los parámetros del codificador (`preset`, `tune`, `pix_fmt`, `crf`) y el ancho de la escala son configurables mediante variables de entorno para equilibrar calidad y CPU.
+
+## Pipeline de grabación por defecto
+
+El gestor de procesos lanza FFmpeg con el siguiente perfil, equivalente a ejecutar:
+
+```bash
+ffmpeg -hide_banner -loglevel warning \
+       -fflags nobuffer -flags low_delay -tcp_nodelay 1 \
+       -f mpjpeg -i http://127.0.0.1:8000/stream \
+       -vf scale=640:-1 \
+       -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+       -f segment -segment_time 600 -segment_atclocktime 1 -reset_timestamps 1 \
+       -movflags +faststart -strftime 1 \
+       recordings/%Y%m%d_%H%M%S.mp4
+```
+
+Si se aplica un ROI, el filtro `crop` se inserta antes de la escala manteniendo la misma tubería de codificación.
 
 ## ROI sincronizado con las grabaciones
 
@@ -150,17 +167,20 @@ Ajusta la ruta al repositorio según tu despliegue.
 - El backend valida el ROI, calcula el recorte en píxeles para la resolución fuente definida en `MINIDVR_RESOLUTION` y lo aplica con `-vf crop`.
 - El evento de inicio incluye el ROI y la región recortada (`x`, `y`, `width`, `height`) para trazabilidad vía WebSocket o `/status`.
 - Variables de entorno relevantes:
-  - `MINIDVR_CROP_ENCODER` (por defecto `libx264`).
-  - `MINIDVR_CROP_PRESET` (por defecto `veryfast`).
-  - `MINIDVR_CROP_CRF` (por defecto `20`).
-  - `MINIDVR_CROP_PIX_FMT` (por defecto `yuv420p`).
-  Ajusta estos valores si utilizas aceleración por hardware u otro códec.
+  - `MINIDVR_ENCODER` (por defecto `libx264`).
+  - `MINIDVR_ENCODER_PRESET` (por defecto `ultrafast`).
+  - `MINIDVR_ENCODER_TUNE` (por defecto `zerolatency`).
+  - `MINIDVR_ENCODER_CRF` (opcional, sin valor por defecto).
+  - `MINIDVR_ENCODER_PIX_FMT` (por defecto `yuv420p`).
+  - `MINIDVR_SCALE_WIDTH` (por defecto `640`).
+  - `MINIDVR_FFMPEG_LOGLEVEL` (por defecto `warning`).
+  Ajusta estos valores si utilizas aceleración por hardware u otro códec o necesitas priorizar calidad sobre latencia.
 
 ## Troubleshooting
 
 - **Sin imagen en la vista previa:** verifica `journalctl -u mini-dvr.service` y confirma que `ustreamer` detecte la cámara (`v4l2-ctl --list-formats-ext`).
 - **Grabación no inicia:** inspecciona permisos de escritura en `~/recordings` y que la URL de `MINIDVR_STREAM_URL` sea accesible desde la Raspberry.
-- **Latencia alta:** revisa la red local y confirma que no haya recortes innecesarios; si el ROI cubre todo el cuadro FFmpeg usa `-c copy`, de lo contrario se transcodifica con `libx264`.
+- **Latencia alta:** revisa la red local y confirma que no haya recortes innecesarios; el sistema siempre recodifica con `libx264` en modo `ultrafast`/`zerolatency`, por lo que puedes ampliar `MINIDVR_ENCODER_PRESET` o reducir la resolución (`MINIDVR_SCALE_WIDTH`) si el hardware va justo de CPU.
 - **No aparecen capturas en la galería:** verifica los permisos de `recordings/photos/` y comprueba que `http://127.0.0.1:8000/snapshot` responda desde la Raspberry Pi.
 
 ## Licencia
