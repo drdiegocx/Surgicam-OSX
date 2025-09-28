@@ -1010,7 +1010,7 @@
     }
 
     controlsAlert.textContent = '';
-    controlsAlert.className = 'alert d-none';
+    controlsAlert.className = 'alert app-alert d-none';
 
     if (!message) {
       return;
