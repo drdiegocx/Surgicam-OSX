@@ -119,7 +119,10 @@ class VideoManager:
                 "*",
             ]
 
+            logger.debug("Launching preview command: %s", " ".join(command))
             self._preview_proc = await self._spawn_process(command)
+            if self._preview_proc.pid is not None:
+                logger.info("Vista previa iniciada (pid=%s) a %sx%s", self._preview_proc.pid, width, height)
 
     async def start_recording(self) -> Path:
         """Start a high-resolution recording.
@@ -158,9 +161,18 @@ class VideoManager:
                 str(output_path),
             ]
 
+            logger.debug("Launching recording command: %s", " ".join(command))
             self._recording_proc = await self._spawn_process(command)
             self._recording_path = output_path
             self._recording_started_at = dt.datetime.utcnow()
+            if self._recording_proc.pid is not None:
+                logger.info(
+                    "Proceso de grabación iniciado (pid=%s) a %sx%s en %s",
+                    self._recording_proc.pid,
+                    width,
+                    height,
+                    output_path,
+                )
             return output_path
 
     async def stop_recording(self) -> Optional[Path]:
@@ -213,8 +225,12 @@ class VideoManager:
             raise ProcessError(f"Executable not found: {command[0]}") from exc
 
         await asyncio.sleep(0.1)
+        logger.debug("Spawned %s with pid=%s", command[0], getattr(process, "pid", "?"))
         if process.returncode is not None:
             stderr = await process.stderr.read()
+            logger.error(
+                "Proceso %s finalizó inmediatamente con código %s", command[0], process.returncode
+            )
             raise ProcessError(
                 f"Failed to start process {command[0]} (code={process.returncode}). "
                 f"Stderr: {stderr.decode().strip()}"

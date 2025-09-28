@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +19,35 @@ logger = logging.getLogger("surgicam")
 app = FastAPI(title="SurgiCam Stream Controller")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
-video_manager = VideoManager()
+def _parse_resolution(env_var: str, fallback: tuple[int, int]) -> tuple[int, int]:
+    value = os.getenv(env_var)
+    if not value:
+        return fallback
+    try:
+        width_str, height_str = value.lower().split("x", 1)
+        width = int(width_str)
+        height = int(height_str)
+        if width <= 0 or height <= 0:
+            raise ValueError
+        return (width, height)
+    except ValueError:
+        logger.warning(
+            "Valor inválido para %s=%r. Usando resolución por defecto %sx%s.",
+            env_var,
+            value,
+            fallback[0],
+            fallback[1],
+        )
+        return fallback
+
+
+preview_resolution = _parse_resolution("PREVIEW_RESOLUTION", (640, 480))
+record_resolution = _parse_resolution("RECORD_RESOLUTION", (1920, 1080))
+
+video_manager = VideoManager(
+    preview_resolution=preview_resolution,
+    record_resolution=record_resolution,
+)
 
 
 class ClientRegistry:
@@ -85,6 +114,13 @@ def _current_status(websocket: WebSocket | None = None) -> dict[str, Any]:
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    logger.info(
+        "Configuración de resolución - Vista previa: %sx%s, Grabación: %sx%s",
+        preview_resolution[0],
+        preview_resolution[1],
+        record_resolution[0],
+        record_resolution[1],
+    )
     try:
         await video_manager.ensure_preview()
     except ProcessError as exc:

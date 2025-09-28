@@ -45,6 +45,13 @@ Modifica los valores por defecto actualizando la instancia `VideoManager` en `ap
 - `record_resolution`: resolución usada durante la grabación.
 - `record_dir`: carpeta de destino para los archivos resultantes.
 
+También puedes ajustar las resoluciones por medio de variables de entorno antes de iniciar el servidor:
+
+- `PREVIEW_RESOLUTION`, por ejemplo `PREVIEW_RESOLUTION=800x600`.
+- `RECORD_RESOLUTION`, por ejemplo `RECORD_RESOLUTION=3840x2160`.
+
+Si se especifica un formato inválido, la aplicación mantendrá los valores por defecto y mostrará una advertencia en los logs.
+
 ## Advertencia
 
 Esta aplicación controla procesos del sistema (`ustreamer` y `ffmpeg`). Asegúrate de ejecutar el servidor con los permisos adecuados y de tener suficiente espacio en disco para las grabaciones.
