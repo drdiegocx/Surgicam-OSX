@@ -5,14 +5,17 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
+from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from starlette.responses import StreamingResponse
 
 try:  # Compatibilidad con Pydantic v2 y v1
     from pydantic import model_validator as _model_validator
@@ -143,24 +146,74 @@ async def media_index() -> JSONResponse:
     return JSONResponse(status_code=200, content=manager.list_media())
 
 
+_RANGE_RE = re.compile(r"bytes=(\d+)-(\d*)")
+
+
+def _iter_file_chunks(path: Path, start: int, end: int, chunk_size: int = 64 * 1024) -> Iterator[bytes]:
+    """Lee un archivo en segmentos delimitados por rango."""
+
+    with path.open("rb") as file_obj:
+        file_obj.seek(start)
+        remaining = end - start + 1
+        while remaining > 0:
+            read_size = min(chunk_size, remaining)
+            data = file_obj.read(read_size)
+            if not data:
+                break
+            remaining -= len(data)
+            yield data
+
+
+def _serve_video_file(path: Path, request: Request) -> Response:
+    file_size = path.stat().st_size
+    range_header = request.headers.get("range")
+    if range_header:
+        match = _RANGE_RE.fullmatch(range_header.strip())
+        if not match:
+            raise HTTPException(status_code=416, detail="Encabezado Range inválido.")
+        start = int(match.group(1))
+        end_group = match.group(2)
+        end = int(end_group) if end_group else file_size - 1
+        if start >= file_size or end < start:
+            raise HTTPException(status_code=416, detail="Rango fuera de los límites del recurso.")
+        end = min(end, file_size - 1)
+        chunk_generator = _iter_file_chunks(path, start, end)
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(end - start + 1),
+            "Content-Disposition": f"inline; filename={path.name}",
+        }
+        return StreamingResponse(
+            chunk_generator,
+            status_code=206,
+            media_type="video/mp4",
+            headers=headers,
+        )
+
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Disposition": f"inline; filename={path.name}",
+    }
+    return FileResponse(path, filename=path.name, media_type="video/mp4", headers=headers)
+
+
 @router.get("/media/{category}/{name}")
-async def media_download(category: str, name: str) -> FileResponse:
+async def media_download(category: str, name: str, request: Request) -> Response:
     try:
         path = manager.resolve_media_path(category, name)
     except ValueError as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Archivo no encontrado.") from exc
-    media_type = None
-    headers = None
-
     if category == "videos":
-        media_type = "video/mp4"
-        headers = {"Content-Disposition": f"inline; filename={path.name}"}
-    elif category == "photos":
+        return _serve_video_file(path, request)
+
+    media_type = None
+    if category == "photos":
         media_type = "image/jpeg"
 
-    return FileResponse(path, filename=path.name, media_type=media_type, headers=headers)
+    return FileResponse(path, filename=path.name, media_type=media_type)
 
 
 @router.delete("/api/media/{category}/{name}", response_class=JSONResponse)
