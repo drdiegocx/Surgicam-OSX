@@ -151,7 +151,16 @@ async def media_download(category: str, name: str) -> FileResponse:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Archivo no encontrado.") from exc
-    return FileResponse(path, filename=path.name)
+    media_type = None
+    headers = None
+
+    if category == "videos":
+        media_type = "video/mp4"
+        headers = {"Content-Disposition": f"inline; filename={path.name}"}
+    elif category == "photos":
+        media_type = "image/jpeg"
+
+    return FileResponse(path, filename=path.name, media_type=media_type, headers=headers)
 
 
 @router.delete("/api/media/{category}/{name}", response_class=JSONResponse)
