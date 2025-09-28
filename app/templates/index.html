@@ -2,7 +2,10 @@
 <html lang="es">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <title>Mini-DVR | Panel de control</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -16,6 +19,10 @@
       integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
       crossorigin="anonymous"
     />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+    />
     <link rel="stylesheet" href="/static/css/styles.css" />
   </head>
   <body
@@ -24,23 +31,76 @@
     data-source-width="{{ source_width }}"
     data-source-height="{{ source_height }}"
   >
-    <main class="app-shell container py-4">
-      <header class="app-header mb-4 text-center text-md-start">
-        <span class="app-eyebrow text-uppercase">Mini-DVR Raspberry Pi</span>
-        <h1 class="app-title">Panel de control</h1>
-        <p class="app-subtitle text-muted mb-0">
-          Vista previa MJPEG en vivo, zoom digital y grabación segmentada sin interrumpir el flujo.
-        </p>
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="header-body text-center text-md-start">
+          <span class="app-eyebrow text-uppercase">Mini-DVR Raspberry Pi</span>
+          <h1 class="app-title">Panel de control</h1>
+          <p class="app-subtitle mb-0">
+            Vista previa MJPEG en vivo, zoom digital y grabación segmentada sin interrumpir el flujo.
+          </p>
+        </div>
+        <div class="header-actions">
+          <button
+            class="btn btn-outline-light btn-sm d-inline-flex align-items-center gap-2"
+            type="button"
+            data-bs-toggle="modal"
+            data-bs-target="#galleryModal"
+          >
+            <i class="bi bi-collection-play" aria-hidden="true"></i>
+            <span>Galería</span>
+          </button>
+        </div>
       </header>
 
-      <div class="row gy-4 app-grid">
-        <section class="col-12 col-lg-8">
+      <div id="controlsAlert" class="alert app-alert d-none" role="alert"></div>
+
+      <div class="app-layout">
+        <section class="preview-panel">
           <div class="card preview-card border-0 shadow-sm h-100">
             <div class="card-body p-0">
               <div class="preview-frame ratio ratio-16x9" id="previewFrame">
+                <div class="preview-status-bar" aria-live="polite">
+                  <div class="status-pill">
+                    <span class="status-label">Vista previa</span>
+                    <span id="previewState" class="status-value badge rounded-pill">-</span>
+                  </div>
+                  <div class="status-pill">
+                    <span class="status-label">Grabación</span>
+                    <span id="recordState" class="status-value badge rounded-pill">-</span>
+                  </div>
+                  <div class="status-meta">
+                    <p id="fileInfo" class="status-meta-text small mb-0"></p>
+                    <p id="alerts" class="status-alert small mb-0"></p>
+                  </div>
+                </div>
                 <div class="preview-viewport" id="previewViewport">
                   <img id="preview" src="" alt="Vista previa en vivo" class="preview-image" />
                   <div class="preview-watermark" aria-hidden="true">SURGICAM</div>
+                </div>
+                <div class="preview-toolbar" role="group" aria-label="Acciones principales">
+                  <button id="startBtn" class="btn btn-primary btn-action">
+                    <i class="bi bi-record-circle" aria-hidden="true"></i>
+                    <span>Grabar</span>
+                  </button>
+                  <button id="stopBtn" class="btn btn-outline-light btn-action" disabled>
+                    <i class="bi bi-stop-circle" aria-hidden="true"></i>
+                    <span>Detener</span>
+                  </button>
+                  <button id="snapshotBtn" class="btn btn-outline-primary btn-action" type="button">
+                    <i class="bi bi-camera" aria-hidden="true"></i>
+                    <span>Foto</span>
+                  </button>
+                  <button
+                    class="btn btn-outline-secondary btn-action"
+                    type="button"
+                    data-bs-toggle="offcanvas"
+                    data-bs-target="#controlsDrawer"
+                    aria-controls="controlsDrawer"
+                  >
+                    <i class="bi bi-sliders" aria-hidden="true"></i>
+                    <span>Controles</span>
+                  </button>
                 </div>
                 <div class="roi-overlay">
                   <div class="roi-mini-map" id="roiMiniMap">
@@ -112,91 +172,31 @@
                 </div>
               </div>
             </div>
-            <div class="preview-actions p-3 p-md-4 border-top border-light-subtle">
-              <div class="action-grid">
-                <button id="startBtn" class="btn btn-primary btn-action">Iniciar grabación</button>
-                <button id="stopBtn" class="btn btn-outline-light btn-action" disabled>
-                  Detener grabación
-                </button>
-                <button id="snapshotBtn" class="btn btn-outline-primary btn-action" type="button">
-                  Capturar foto
-                </button>
-                <button
-                  class="btn btn-outline-secondary btn-action"
-                  type="button"
-                  data-bs-toggle="offcanvas"
-                  data-bs-target="#controlsDrawer"
-                  aria-controls="controlsDrawer"
-                >
-                  Ajustes de cámara
-                </button>
-              </div>
-            </div>
           </div>
         </section>
-
-        <aside class="col-12 col-lg-4">
-          <div class="card status-card border-0 shadow-sm h-100">
-            <div class="card-body">
-              <h2 class="card-title h5 mb-3">Estado del sistema</h2>
-              <div class="status-grid mb-3">
-                <div class="status-row">
-                  <span class="status-label">Vista previa</span>
-                  <span id="previewState" class="badge bg-secondary">-</span>
-                </div>
-                <div class="status-row">
-                  <span class="status-label">Grabación</span>
-                  <span id="recordState" class="badge bg-secondary">-</span>
-                </div>
+        <aside class="info-panel">
+          <div class="card info-card border-0 shadow-sm h-100">
+            <div class="card-body d-flex flex-column gap-3">
+              <div>
+                <h2 class="card-title h5 mb-2">Consejos de uso</h2>
+                <p class="text-muted small mb-0">
+                  Arrastra dentro de la vista previa para reencuadrar. Controla el zoom con la barra lateral
+                  o con los botones de dirección del mini mapa.
+                </p>
               </div>
-              <p id="fileInfo" class="status-meta small text-muted mb-2"></p>
-              <p id="alerts" class="status-alert small text-warning mb-0"></p>
+              <div class="quick-actions">
+                <h3 class="h6 text-uppercase text-muted">Accesos directos</h3>
+                <ul class="quick-actions-list">
+                  <li>Haz clic dentro de la vista previa para centrar un área específica.</li>
+                  <li>Utiliza el control deslizante de zoom para ajustar el encuadre con precisión.</li>
+                  <li>Abre la galería para revisar fotos y videos recientes sin salir del panel.</li>
+                </ul>
+              </div>
             </div>
           </div>
         </aside>
       </div>
     </main>
-
-    <section class="gallery-wrapper container pb-5">
-      <div class="card gallery-card border-0 shadow-sm">
-        <div class="card-body">
-          <div
-            class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-3 mb-3"
-          >
-            <div>
-              <h2 class="card-title h5 mb-1">Galería de medios</h2>
-              <p class="text-muted small mb-0">
-                Consulta y gestiona las fotografías y grabaciones generadas desde el panel.
-              </p>
-            </div>
-            <button
-              id="refreshGalleryBtn"
-              class="btn btn-sm btn-outline-secondary"
-              type="button"
-            >
-              Actualizar
-            </button>
-          </div>
-          <div id="galleryEmpty" class="text-muted small py-2">
-            No hay fotografías ni videos almacenados.
-          </div>
-          <div class="media-section mb-4">
-            <div class="media-section-header d-flex align-items-center justify-content-between gap-2 mb-2">
-              <h3 class="media-heading h6 mb-0">Fotografías</h3>
-              <span id="photoSummary" class="media-summary text-muted small"></span>
-            </div>
-            <div id="photoGallery" class="media-grid"></div>
-          </div>
-          <div class="media-section">
-            <div class="media-section-header d-flex align-items-center justify-content-between gap-2 mb-2">
-              <h3 class="media-heading h6 mb-0">Videos</h3>
-              <span id="videoSummary" class="media-summary text-muted small"></span>
-            </div>
-            <div id="videoGallery" class="media-grid"></div>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <div
       class="modal fade video-modal"
@@ -237,13 +237,14 @@
       tabindex="-1"
       id="controlsDrawer"
       aria-labelledby="controlsDrawerLabel"
+      data-bs-backdrop="false"
+      data-bs-scroll="true"
     >
       <div class="offcanvas-header border-bottom border-light-subtle">
         <h2 class="offcanvas-title h5 mb-0" id="controlsDrawerLabel">Controles de cámara</h2>
         <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Cerrar"></button>
       </div>
       <div class="offcanvas-body d-flex flex-column gap-3">
-        <div id="controlsAlert" class="alert d-none" role="alert"></div>
         <div id="controlsLoading" class="drawer-loading text-center text-muted py-3">
           <div class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></div>
           <span class="ms-2">Cargando controles...</span>
@@ -251,6 +252,57 @@
         <div id="controlsContent" class="d-none d-flex flex-column flex-grow-1">
           <ul class="nav nav-tabs" id="controlsTabNav" role="tablist"></ul>
           <div class="tab-content flex-grow-1 overflow-auto border border-top-0 rounded-bottom" id="controlsTabContent"></div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      class="modal fade gallery-modal"
+      id="galleryModal"
+      tabindex="-1"
+      aria-labelledby="galleryModalLabel"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-dialog-centered modal-xl modal-fullscreen-sm-down">
+        <div class="modal-content">
+          <div class="modal-header border-0 align-items-start">
+            <div>
+              <h2 class="modal-title h5 mb-1" id="galleryModalLabel">Galería de medios</h2>
+              <p class="text-muted small mb-0">
+                Consulta y gestiona las fotografías y grabaciones generadas desde el panel.
+              </p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <button
+                id="refreshGalleryBtn"
+                class="btn btn-sm btn-outline-light"
+                type="button"
+              >
+                <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                <span>Actualizar</span>
+              </button>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+          </div>
+          <div class="modal-body">
+            <div id="galleryEmpty" class="gallery-empty text-muted small py-2">
+              No hay fotografías ni videos almacenados.
+            </div>
+            <div class="media-section mb-4">
+              <div class="media-section-header d-flex align-items-center justify-content-between gap-2 mb-2">
+                <h3 class="media-heading h6 mb-0">Fotografías</h3>
+                <span id="photoSummary" class="media-summary text-muted small"></span>
+              </div>
+              <div id="photoGallery" class="media-grid"></div>
+            </div>
+            <div class="media-section mb-0">
+              <div class="media-section-header d-flex align-items-center justify-content-between gap-2 mb-2">
+                <h3 class="media-heading h6 mb-0">Videos</h3>
+                <span id="videoSummary" class="media-summary text-muted small"></span>
+              </div>
+              <div id="videoGallery" class="media-grid"></div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
