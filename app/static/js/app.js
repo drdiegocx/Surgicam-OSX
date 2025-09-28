@@ -1172,63 +1172,59 @@
 
   function buildMetadataRow(control) {
     const wrapper = document.createElement('div');
-    wrapper.className = 'small text-muted mt-3';
+    wrapper.className = 'control-meta';
 
-    const valueLabel = document.createElement('span');
-    valueLabel.innerHTML = 'Valor actual: ';
-    const valueSpan = document.createElement('span');
-    valueSpan.className = 'fw-semibold';
-    valueSpan.textContent = formatValue(control.value, control.type);
-    valueLabel.appendChild(valueSpan);
-    wrapper.appendChild(valueLabel);
+    function createMetaItem(label, value) {
+      const item = document.createElement('div');
+      item.className = 'control-meta-item';
+      const labelEl = document.createElement('span');
+      labelEl.className = 'control-meta-label';
+      labelEl.textContent = label;
+      const valueEl = document.createElement('span');
+      valueEl.className = 'control-meta-value';
+      valueEl.textContent = formatValue(value, control.type);
+      item.appendChild(labelEl);
+      item.appendChild(valueEl);
+      wrapper.appendChild(item);
+      return valueEl;
+    }
 
-    const minSpan = document.createElement('span');
-    minSpan.className = 'ms-3';
-    minSpan.innerHTML = 'Mínimo: ';
-    const minValue = document.createElement('span');
-    minValue.textContent = formatValue(control.min, control.type);
-    minSpan.appendChild(minValue);
-    wrapper.appendChild(minSpan);
+    const valueElement = createMetaItem('Actual', control.value);
+    const minElement = createMetaItem('Mínimo', control.min);
+    const maxElement = createMetaItem('Máximo', control.max);
+    const defaultElement = createMetaItem('Predeterminado', control.default);
 
-    const maxSpan = document.createElement('span');
-    maxSpan.className = 'ms-3';
-    maxSpan.innerHTML = 'Máximo: ';
-    const maxValue = document.createElement('span');
-    maxValue.textContent = formatValue(control.max, control.type);
-    maxSpan.appendChild(maxValue);
-    wrapper.appendChild(maxSpan);
-
-    const defaultSpan = document.createElement('span');
-    defaultSpan.className = 'ms-3';
-    defaultSpan.innerHTML = 'Predeterminado: ';
-    const defaultValue = document.createElement('span');
-    defaultValue.textContent = formatValue(control.default, control.type);
-    defaultSpan.appendChild(defaultValue);
-    wrapper.appendChild(defaultSpan);
+    if (control.step !== null && control.step !== undefined) {
+      createMetaItem('Paso', control.step);
+    }
 
     return {
       wrapper,
-      valueElement: valueSpan,
-      minElement: minValue,
-      maxElement: maxValue,
-      defaultElement: defaultValue,
+      valueElement,
+      minElement,
+      maxElement,
+      defaultElement,
     };
   }
 
   function createControlElement(control) {
-    const card = document.createElement('div');
-    card.className = 'control-card rounded-3 border border-light-subtle bg-dark-subtle p-3 mb-3';
+    const card = document.createElement('article');
+    card.className = 'control-card mb-3';
     card.dataset.controlId = control.id;
 
     const header = document.createElement('div');
-    header.className = 'd-flex justify-content-between align-items-start gap-3';
+    header.className = 'control-card-header';
 
     const title = document.createElement('div');
-    title.innerHTML = `<h3 class="h6 mb-1">${control.name}</h3>`;
-    const typeBadge = document.createElement('span');
-    typeBadge.className = 'badge text-bg-secondary';
-    typeBadge.textContent = control.type;
-    title.appendChild(typeBadge);
+    title.className = 'control-card-title';
+    const nameHeading = document.createElement('h3');
+    nameHeading.className = 'name';
+    nameHeading.textContent = control.name;
+    const typeLabel = document.createElement('span');
+    typeLabel.className = 'type';
+    typeLabel.textContent = `Tipo: ${control.type}`;
+    title.appendChild(nameHeading);
+    title.appendChild(typeLabel);
     header.appendChild(title);
 
     const defaultButton = document.createElement('button');
@@ -1241,6 +1237,15 @@
     header.appendChild(defaultButton);
 
     card.appendChild(header);
+
+    const summary = document.createElement('p');
+    summary.className = 'control-card-summary';
+    const categoryText = control.category ? ` dentro de “${control.category}”` : '';
+    summary.textContent = `Ajusta el parámetro “${control.name}”${categoryText} para optimizar la señal.`;
+    card.appendChild(summary);
+
+    const bodySection = document.createElement('div');
+    bodySection.className = 'control-card-body';
 
     let inputElement = null;
     let inputType = null;
@@ -1263,7 +1268,7 @@
       label.className = 'form-check-label';
       label.textContent = 'Activo';
       formSwitch.appendChild(label);
-      card.appendChild(formSwitch);
+      bodySection.appendChild(formSwitch);
       inputElement = input;
       inputType = 'toggle';
     } else if (
@@ -1293,7 +1298,7 @@
         const selectedValue = parseInt(select.value, 10);
         sendControlUpdate(control.id, { value: selectedValue });
       });
-      card.appendChild(select);
+      bodySection.appendChild(select);
       inputElement = select;
       inputType = 'select';
     } else if (
@@ -1343,22 +1348,23 @@
             : parseInt(range.value, 10);
         queueRangeUpdate(control.id, raw, true);
       });
-      card.appendChild(range);
+      bodySection.appendChild(range);
       inputElement = range;
       inputType = 'range';
     } else if (normalizedType === 'button') {
       const info = document.createElement('p');
       info.className = 'text-muted small mt-2';
       info.textContent = 'Este control solo es accionable desde el dispositivo físico.';
-      card.appendChild(info);
+      bodySection.appendChild(info);
     } else {
       const fallback = document.createElement('p');
       fallback.className = 'text-muted small mt-2';
       fallback.textContent = 'Este tipo de control no es editable desde la interfaz.';
-      card.appendChild(fallback);
+      bodySection.appendChild(fallback);
     }
 
-    card.appendChild(metadata.wrapper);
+    bodySection.appendChild(metadata.wrapper);
+    card.appendChild(bodySection);
 
     registerControl(control, {
       wrapper: card,
