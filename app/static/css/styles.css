@@ -51,6 +51,12 @@ h2,
   min-width: 12rem;
 }
 
+#roiControls {
+  width: 200px;
+  height: 200px;
+  overflow-y: auto;
+}
+
 .roi-controls-body {
   padding: 0.75rem;
 }

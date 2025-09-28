@@ -32,10 +32,39 @@
 
   const protocol = window.location.protocol === 'https:' ? 'https://' : 'http://';
   const streamUrl = `${protocol}${window.location.hostname}:${previewPort}/stream`;
+  const snapshotUrl = `${protocol}${window.location.hostname}:${previewPort}/snapshot`;
   previewImg.src = streamUrl;
-  if (miniMapImg) {
-    miniMapImg.src = streamUrl;
+
+  const MINI_MAP_REFRESH_MS = 4000;
+  let miniMapIntervalId;
+  let lastMiniMapUpdate = 0;
+
+  function refreshMiniMap(force) {
+    if (!miniMapImg) {
+      return;
+    }
+    const now = Date.now();
+    if (!force && now - lastMiniMapUpdate < 500) {
+      return;
+    }
+    lastMiniMapUpdate = now;
+    miniMapImg.src = `${snapshotUrl}?_=${now}`;
   }
+
+  function startMiniMapTimer() {
+    if (!miniMapImg) {
+      return;
+    }
+    if (miniMapIntervalId) {
+      window.clearInterval(miniMapIntervalId);
+    }
+    refreshMiniMap(true);
+    miniMapIntervalId = window.setInterval(function () {
+      refreshMiniMap(false);
+    }, MINI_MAP_REFRESH_MS);
+  }
+
+  startMiniMapTimer();
 
   let socket;
   let reconnectTimer;
@@ -103,6 +132,7 @@
         roiIndicator.style.top = `${topPx}px`;
       }
     }
+    refreshMiniMap(true);
     updateZoomDisplay();
   }
 
