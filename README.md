@@ -24,6 +24,7 @@ Inicie el servidor con:
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Abra el navegador en `http://<IP>:8000` para ver la vista previa y controlar las grabaciones.
+Abra el navegador en `http://<IP>:8000` para ver la vista previa (transcodificada a 720p@10fps) y controlar las grabaciones.
 
 Las grabaciones en alta resolución se almacenan en la carpeta `recordings/` en formato MJPEG (`.avi`).
+Los archivos terminados se pueden descargar directamente desde `http://<IP>:8000/recordings/<nombre_del_archivo>`.

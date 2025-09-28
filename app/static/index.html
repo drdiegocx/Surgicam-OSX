@@ -107,16 +107,28 @@
 
         let lastObjectUrl = null;
 
+        function setStatus(message, asHtml = false) {
+            if (asHtml) {
+                status.innerHTML = message;
+            } else {
+                status.textContent = message;
+            }
+        }
+
         ws.binaryType = 'arraybuffer';
         ws.onopen = () => {
-            status.textContent = 'Vista previa conectada';
+            setStatus('Vista previa conectada');
         };
         ws.onclose = () => {
-            status.textContent = 'Conexión cerrada';
+            if (lastObjectUrl) {
+                URL.revokeObjectURL(lastObjectUrl);
+                lastObjectUrl = null;
+            }
+            setStatus('Conexión cerrada');
         };
         ws.onerror = (event) => {
             console.error('WebSocket error', event);
-            status.textContent = 'Error en la conexión de vista previa';
+            setStatus('Error en la conexión de vista previa');
         };
         ws.onmessage = (event) => {
             if (lastObjectUrl) {
@@ -138,25 +150,30 @@
 
         startBtn.addEventListener('click', async () => {
             startBtn.disabled = true;
-            status.textContent = 'Iniciando grabación…';
+            setStatus('Iniciando grabación…');
             try {
                 const data = await callApi('/recordings/start');
-                status.textContent = `Grabando en ${data.file}`;
+                setStatus(`Grabando en ${data.file}`);
                 stopBtn.disabled = false;
             } catch (error) {
-                status.textContent = error.message;
+                setStatus(error.message);
                 startBtn.disabled = false;
             }
         });
 
         stopBtn.addEventListener('click', async () => {
             stopBtn.disabled = true;
-            status.textContent = 'Deteniendo grabación…';
+            setStatus('Deteniendo grabación…');
             try {
                 const data = await callApi('/recordings/stop');
-                status.textContent = `Grabación guardada en ${data.file}`;
+                const filePath = data.file.startsWith('/') ? data.file : `/${data.file}`;
+                const fileName = filePath.split('/').pop();
+                setStatus(
+                    `Grabación guardada en <a href="${filePath}" target="_blank" rel="noopener">${fileName}</a>`,
+                    true
+                );
             } catch (error) {
-                status.textContent = error.message;
+                setStatus(error.message);
             } finally {
                 startBtn.disabled = false;
             }

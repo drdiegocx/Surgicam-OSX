@@ -17,6 +17,8 @@ from gi.repository import Gst
 
 logging.basicConfig(level=logging.INFO)
 
+RECORDINGS_DIR = pathlib.Path("recordings")
+
 
 @dataclass
 class RecordingBranch:
@@ -63,6 +65,7 @@ class CameraController:
         queue_preview = Gst.ElementFactory.make("queue", "preview-queue")
         jpegdec = Gst.ElementFactory.make("jpegdec", "preview-dec")
         videoscale = Gst.ElementFactory.make("videoscale", "preview-scale")
+        videorate = Gst.ElementFactory.make("videorate", "preview-rate")
         videoconvert = Gst.ElementFactory.make("videoconvert", "preview-convert")
         preview_caps = Gst.ElementFactory.make("capsfilter", "preview-caps")
         jpegenc = Gst.ElementFactory.make("jpegenc", "preview-enc")
@@ -72,6 +75,7 @@ class CameraController:
                 queue_preview,
                 jpegdec,
                 videoscale,
+                videorate,
                 videoconvert,
                 preview_caps,
                 jpegenc,
@@ -79,16 +83,25 @@ class CameraController:
         ):
             raise RuntimeError("Failed to create preview elements")
 
+        queue_preview.set_property("max-size-buffers", 1)
+        queue_preview.set_property("max-size-bytes", 0)
+        queue_preview.set_property("max-size-time", 0)
+        queue_preview.set_property("leaky", "downstream")
+        videorate.set_property("drop-only", True)
+        jpegdec.set_property("idct-method", "ifast")
+
         preview_caps.set_property(
             "caps",
-            Gst.Caps.from_string("video/x-raw,width=1280,height=720"),
+            Gst.Caps.from_string(
+                "video/x-raw,format=I420,width=1280,height=720,framerate=10/1"
+            ),
         )
         self._preview_sink.set_property("emit-signals", False)
         self._preview_sink.set_property("max-buffers", 1)
         self._preview_sink.set_property("drop", True)
         self._preview_sink.set_property("sync", False)
 
-        jpegenc.set_property("quality", 60)
+        jpegenc.set_property("quality", 55)
 
         self._pipeline.add(src)
         self._pipeline.add(capsfilter)
@@ -97,6 +110,7 @@ class CameraController:
             queue_preview,
             jpegdec,
             videoscale,
+            videorate,
             videoconvert,
             preview_caps,
             jpegenc,
@@ -113,8 +127,10 @@ class CameraController:
             raise RuntimeError("Failed to link preview queue")
         if not jpegdec.link(videoscale):
             raise RuntimeError("Failed to link jpegdec to videoscale")
-        if not videoscale.link(videoconvert):
-            raise RuntimeError("Failed to link videoscale to videoconvert")
+        if not videoscale.link(videorate):
+            raise RuntimeError("Failed to link videoscale to videorate")
+        if not videorate.link(videoconvert):
+            raise RuntimeError("Failed to link videorate to videoconvert")
         if not videoconvert.link(preview_caps):
             raise RuntimeError("Failed to link videoconvert to capsfilter")
         if not preview_caps.link(jpegenc):
@@ -211,6 +227,11 @@ class CameraController:
 
             filesink.set_property("location", str(location))
             filesink.set_property("sync", False)
+            filesink.set_property("async", False)
+            queue.set_property("flush-on-eos", True)
+            queue.set_property("max-size-buffers", 0)
+            queue.set_property("max-size-bytes", 0)
+            queue.set_property("max-size-time", 0)
 
             for element in (queue, jpegparse, mux, filesink):
                 self._pipeline.add(element)
@@ -246,23 +267,30 @@ class CameraController:
 
             self._recording = None
 
+            queue_element = branch.elements[0]
+            queue_sink_pad = queue_element.get_static_pad("sink")
+            queue_src_pad = queue_element.get_static_pad("src")
             eos_event = threading.Event()
 
             def _block_probe(_pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
-                src_pad = branch.elements[0].get_static_pad("src")
-                if src_pad:
-                    src_pad.send_event(Gst.Event.new_eos())
+                if queue_src_pad:
+                    queue_src_pad.send_event(Gst.Event.new_eos())
                 eos_event.set()
                 return Gst.PadProbeReturn.REMOVE
 
             probe_id = branch.pad.add_probe(
-                Gst.PadProbeType.BLOCK_DOWNSTREAM, _block_probe
+                Gst.PadProbeType.BLOCK_DOWNSTREAM | Gst.PadProbeType.IDLE,
+                _block_probe,
             )
+
             if not eos_event.wait(timeout=2):
                 logging.warning(
-                    "Timed out blocking recording branch; removing without EOS"
+                    "Timed out waiting to drain recording branch; forcing shutdown"
                 )
                 branch.pad.remove_probe(probe_id)
+
+            if branch.pad.is_linked() and queue_sink_pad and queue_sink_pad.is_linked():
+                branch.pad.unlink(queue_sink_pad)
 
             bus = self._pipeline.get_bus()
             deadline = time.time() + 5
@@ -277,7 +305,7 @@ class CameraController:
                     err, debug = message.parse_error()
                     logging.error("Error stopping recording: %s %s", err, debug)
                     break
-                if message.src in branch.elements:
+                if message.type == Gst.MessageType.EOS and message.src in branch.elements:
                     break
 
             for element in reversed(branch.elements):
@@ -331,7 +359,7 @@ async def start_recording() -> dict:
         raise HTTPException(status_code=400, detail="Recording already in progress")
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = pathlib.Path("recordings")
+    output_dir = RECORDINGS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"recording_{timestamp}.avi"
     camera.start_recording(path)
@@ -350,4 +378,12 @@ app.mount(
     "/static",
     StaticFiles(directory=pathlib.Path(__file__).with_name("static")),
     name="static",
+)
+
+recordings_dir = RECORDINGS_DIR
+recordings_dir.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/recordings",
+    StaticFiles(directory=recordings_dir),
+    name="recordings",
 )
