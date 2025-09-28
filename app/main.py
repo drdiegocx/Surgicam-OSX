@@ -273,8 +273,10 @@ class CameraController:
             eos_event = threading.Event()
 
             def _block_probe(_pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
-                if queue_src_pad:
-                    queue_src_pad.send_event(Gst.Event.new_eos())
+                if queue_src_pad and queue_src_pad.is_linked():
+                    success = queue_src_pad.push_event(Gst.Event.new_eos())
+                    if not success:
+                        logging.warning("Failed to push EOS to recording branch")
                 eos_event.set()
                 return Gst.PadProbeReturn.REMOVE
 
