@@ -1041,11 +1041,30 @@
     }
   }
 
-  function formatValue(value, type) {
+  function createOptionMap(control) {
+    if (!control || !Array.isArray(control.options) || control.options.length === 0) {
+      return null;
+    }
+    const map = new Map();
+    control.options.forEach(function (option) {
+      const key = String(option.value);
+      const label = option.label ? String(option.label) : key;
+      map.set(key, label);
+    });
+    return map;
+  }
+
+  function formatValue(value, type, optionMap) {
     if (value === null || value === undefined) {
       return '-';
     }
     const normalizedType = (type || '').toLowerCase();
+    if (optionMap && optionMap.size > 0) {
+      const lookupKey = String(value);
+      if (optionMap.has(lookupKey)) {
+        return optionMap.get(lookupKey);
+      }
+    }
     if (normalizedType === 'bool' || normalizedType === 'boolean') {
       const boolValue = value === true || value === 1 || value === '1';
       return boolValue ? 'Activado' : 'Desactivado';
@@ -1055,6 +1074,13 @@
         return String(value);
       }
       return Number(value).toFixed(2).replace(/\.00$/, '').replace(/\.0$/, '');
+    }
+    return String(value);
+  }
+
+  function datasetValue(value) {
+    if (value === null || value === undefined) {
+      return '';
     }
     return String(value);
   }
@@ -1106,11 +1132,12 @@
     entry.defaultButton.disabled = shouldDisable;
   }
 
-  function registerControl(control, entry) {
+  function registerControl(control, entry, optionMap) {
     entry.controlType = control.type;
     entry.hasDefault = control.default !== null && control.default !== undefined;
     entry.isDefault = isAtDefault(control);
     entry.busy = false;
+    entry.optionMap = optionMap && optionMap.size > 0 ? optionMap : null;
     updateDefaultButtonState(entry);
     entry.name = control.name;
     controlElements.set(control.id, entry);
@@ -1122,19 +1149,22 @@
     if (!entry) {
       return;
     }
+    if (Array.isArray(control.options)) {
+      entry.optionMap = createOptionMap(control);
+    }
     entry.hasDefault = control.default !== null && control.default !== undefined;
     entry.isDefault = isAtDefault(control);
     if (entry.valueElement) {
-      entry.valueElement.textContent = formatValue(control.value, control.type);
+      entry.valueElement.textContent = formatValue(control.value, control.type, entry.optionMap);
     }
     if (entry.minElement) {
-      entry.minElement.textContent = formatValue(control.min, control.type);
+      entry.minElement.textContent = formatValue(control.min, control.type, entry.optionMap);
     }
     if (entry.maxElement) {
-      entry.maxElement.textContent = formatValue(control.max, control.type);
+      entry.maxElement.textContent = formatValue(control.max, control.type, entry.optionMap);
     }
     if (entry.defaultElement) {
-      entry.defaultElement.textContent = formatValue(control.default, control.type);
+      entry.defaultElement.textContent = formatValue(control.default, control.type, entry.optionMap);
     }
     if (entry.input && entry.inputType === 'range') {
       const numericValue = Number(control.value ?? control.default ?? control.min ?? 0);
@@ -1148,10 +1178,10 @@
       const current = toComparable(control.value, control.type);
       entry.input.checked = Boolean(current);
     }
-    entry.wrapper.dataset.value = control.value;
-    entry.wrapper.dataset.default = control.default;
-    entry.wrapper.dataset.min = control.min;
-    entry.wrapper.dataset.max = control.max;
+    entry.wrapper.dataset.value = datasetValue(control.value);
+    entry.wrapper.dataset.default = datasetValue(control.default);
+    entry.wrapper.dataset.min = datasetValue(control.min);
+    entry.wrapper.dataset.max = datasetValue(control.max);
     updateDefaultButtonState(entry);
   }
 
@@ -1170,11 +1200,11 @@
     updateDefaultButtonState(entry);
   }
 
-  function buildMetadataRow(control) {
+  function buildMetadataRow(control, optionMap) {
     const wrapper = document.createElement('div');
     wrapper.className = 'control-meta';
 
-    function createMetaItem(label, value) {
+    function createMetaItem(label, value, useOptions = true) {
       const item = document.createElement('div');
       item.className = 'control-meta-item';
       const labelEl = document.createElement('span');
@@ -1182,7 +1212,7 @@
       labelEl.textContent = label;
       const valueEl = document.createElement('span');
       valueEl.className = 'control-meta-value';
-      valueEl.textContent = formatValue(value, control.type);
+      valueEl.textContent = formatValue(value, control.type, useOptions ? optionMap : null);
       item.appendChild(labelEl);
       item.appendChild(valueEl);
       wrapper.appendChild(item);
@@ -1195,7 +1225,7 @@
     const defaultElement = createMetaItem('Predeterminado', control.default);
 
     if (control.step !== null && control.step !== undefined) {
-      createMetaItem('Paso', control.step);
+      createMetaItem('Paso', control.step, false);
     }
 
     return {
@@ -1250,7 +1280,8 @@
     let inputElement = null;
     let inputType = null;
 
-    const metadata = buildMetadataRow(control);
+    const optionMap = createOptionMap(control);
+    const metadata = buildMetadataRow(control, optionMap);
 
     const normalizedType = (control.type || '').toLowerCase();
     if (normalizedType === 'bool' || normalizedType === 'boolean') {
@@ -1283,7 +1314,7 @@
         control.options.forEach(function (option) {
           const opt = document.createElement('option');
           opt.value = String(option.value);
-          opt.textContent = `${option.value} — ${option.label}`;
+          opt.textContent = option.label || String(option.value);
           select.appendChild(opt);
         });
       }
@@ -1295,7 +1326,9 @@
         select.selectedIndex = 0;
       }
       select.addEventListener('change', function () {
-        const selectedValue = parseInt(select.value, 10);
+        const rawSelection = select.value;
+        const numericValue = Number(rawSelection);
+        const selectedValue = Number.isNaN(numericValue) ? rawSelection : numericValue;
         sendControlUpdate(control.id, { value: selectedValue });
       });
       bodySection.appendChild(select);
@@ -1323,7 +1356,7 @@
       range.value = current;
       range.addEventListener('input', function () {
         if (metadata.valueElement) {
-          metadata.valueElement.textContent = formatValue(Number(range.value), control.type);
+          metadata.valueElement.textContent = formatValue(Number(range.value), control.type, optionMap);
         }
         const rawValue =
           normalizedType === 'float' || normalizedType === 'double'
@@ -1375,7 +1408,7 @@
       maxElement: metadata.maxElement,
       defaultElement: metadata.defaultElement,
       defaultButton,
-    });
+    }, optionMap);
 
     return card;
   }
