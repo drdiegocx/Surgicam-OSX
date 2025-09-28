@@ -1,7 +1,5 @@
 """Video streaming and recording process management utilities."""
 
-from __future__ import annotations
-
 import asyncio
 import datetime as dt
 import logging
