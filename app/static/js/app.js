@@ -68,6 +68,8 @@
 
   let socket;
   let reconnectTimer;
+  const messageQueue = [];
+  const pendingControlUpdates = new Set();
 
   const panButtons = document.querySelectorAll('[data-pan]');
   const minZoom = zoomSlider ? Math.max(1, (Number(zoomSlider.min) / 100) || 1) : 1;
@@ -321,6 +323,21 @@
   }
 
   function handleEvent(data) {
+    if (data.status === 'controls') {
+      const scope = data.scope || 'list';
+      if (scope === 'update') {
+        handleControlsUpdate(data);
+      } else {
+        handleControlsList(data);
+      }
+      return;
+    }
+
+    if (data.status === 'controls:error') {
+      handleControlsError(data);
+      return;
+    }
+
     if (data.preview) {
       setBadge(previewState, data.preview === 'running' ? 'running' : 'stopped');
     }
@@ -351,6 +368,85 @@
     }
   }
 
+  function handleControlsList(data) {
+    const controls = Array.isArray(data.controls) ? data.controls : [];
+    buildControls(controls);
+    controlsLoaded = true;
+    isLoadingControls = false;
+    pendingControlUpdates.clear();
+    setControlsLoading(false);
+    showControlsContent(true);
+    showControlsMessage('');
+  }
+
+  function handleControlsUpdate(data) {
+    if (!data || !data.control) {
+      return;
+    }
+    const control = data.control;
+    updateControlUI(control);
+    const identifier = control.identifier;
+    if (identifier) {
+      setControlBusy(identifier, false);
+      if (pendingControlUpdates.has(identifier)) {
+        const entry = controlElements.get(identifier);
+        const controlName = entry && entry.name ? `"${entry.name}"` : 'el control';
+        showControlsMessage(`Se aplicó ${controlName}.`, 'success');
+        pendingControlUpdates.delete(identifier);
+      }
+    }
+  }
+
+  function handleControlsError(data) {
+    const scope = data && data.scope ? data.scope : 'list';
+    const detail = (data && data.detail) || 'No se pudo procesar la petición.';
+    if (scope === 'update') {
+      if (data && data.identifier) {
+        pendingControlUpdates.delete(data.identifier);
+        setControlBusy(data.identifier, false);
+      }
+      showControlsMessage(detail, 'danger');
+      if (data && data.refresh) {
+        window.setTimeout(function () {
+          loadControls(true);
+        }, 350);
+      }
+      return;
+    }
+    isLoadingControls = false;
+    controlsLoaded = false;
+    setControlsLoading(false);
+    showControlsContent(false);
+    showControlsMessage(detail, 'danger');
+  }
+
+  function flushQueue() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    while (messageQueue.length > 0) {
+      socket.send(messageQueue.shift());
+    }
+  }
+
+  function sendCommand(command, payload = {}, options = {}) {
+    const config = options || {};
+    const allowQueue = Boolean(config.allowQueue);
+    const message = JSON.stringify({ command, ...payload });
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(message);
+      return true;
+    }
+    if (allowQueue) {
+      if (messageQueue.length >= 8) {
+        messageQueue.shift();
+      }
+      messageQueue.push(message);
+      return true;
+    }
+    return false;
+  }
+
   function connect() {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
     socket = new WebSocket(`${wsProtocol}${window.location.host}/ws`);
@@ -361,6 +457,16 @@
         reconnectTimer = undefined;
       }
       alerts.textContent = '';
+      flushQueue();
+      if (!controlsLoaded) {
+        loadControls();
+      } else if (
+        controlsDrawer &&
+        controlsDrawer.classList.contains('show') &&
+        !isLoadingControls
+      ) {
+        loadControls(true);
+      }
     };
 
     socket.onmessage = function (event) {
@@ -376,11 +482,23 @@
       alerts.textContent = 'Reconectando con el servidor...';
       startBtn.disabled = true;
       stopBtn.disabled = true;
+      pendingControlUpdates.forEach(function (controlId) {
+        setControlBusy(controlId, false);
+      });
+      pendingControlUpdates.clear();
+      if (isLoadingControls) {
+        isLoadingControls = false;
+        setControlsLoading(false);
+      }
+      controlsLoaded = false;
+      messageQueue.length = 0;
+      showControlsMessage('Conexión perdida. Reintentando…', 'warning');
       reconnectTimer = setTimeout(connect, 2000);
     };
 
     socket.onerror = function () {
       alerts.textContent = 'Error en la comunicación con el backend.';
+      showControlsMessage('Error de comunicación con el backend.', 'danger');
     };
   }
 
@@ -820,77 +938,60 @@
     }
   }
 
-  async function loadControls(force = false) {
+  function loadControls(force = false) {
     if (isLoadingControls) {
       return;
     }
     if (!force && controlsLoaded) {
       return;
     }
+    controlsLoaded = false;
     isLoadingControls = true;
     showControlsMessage('');
     setControlsLoading(true);
     showControlsContent(false);
-    try {
-      const url = force ? '/api/controls?refresh=1' : '/api/controls';
-      const response = await fetch(url);
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        const message = error.detail || 'No se pudo obtener la configuración de cámara.';
-        throw new Error(message);
-      }
-      const data = await response.json();
-      const controls = Array.isArray(data.controls) ? data.controls : [];
-      buildControls(controls);
-      controlsLoaded = true;
-    } catch (error) {
-      console.error('No se pudieron cargar los controles V4L2', error);
-      showControlsMessage(error.message || 'No se pudieron cargar los controles.', 'danger');
-    } finally {
-      setControlsLoading(false);
+    const sent = sendCommand(
+      'controls:list',
+      { refresh: Boolean(force) },
+      { allowQueue: true }
+    );
+    if (!sent) {
       isLoadingControls = false;
+      setControlsLoading(false);
+      showControlsMessage('No hay conexión con el backend.', 'danger');
     }
   }
 
-  async function sendControlUpdate(controlId, payload) {
+  function sendControlUpdate(controlId, payload) {
     setControlBusy(controlId, true);
+    pendingControlUpdates.add(controlId);
     showControlsMessage('');
-    try {
-      const response = await fetch(`/api/controls/${controlId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        const message = error.detail || 'No se pudo actualizar el control.';
-        throw new Error(message);
-      }
-      const data = await response.json();
-      if (data && data.control) {
-        updateControlUI(data.control);
-        const entry = controlElements.get(controlId);
-        const controlName = entry && entry.name ? `"${entry.name}"` : 'el control';
-        showControlsMessage(`Se aplicó ${controlName}.`, 'success');
-      }
-    } catch (error) {
-      console.error('Error actualizando control', error);
-      showControlsMessage(error.message || 'Ocurrió un error al aplicar el cambio.', 'danger');
-      await loadControls(true);
-    } finally {
+    const commandPayload = { identifier: controlId };
+    if (Object.prototype.hasOwnProperty.call(payload, 'action')) {
+      commandPayload.action = payload.action;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'value')) {
+      commandPayload.value = payload.value;
+    }
+    const sent = sendCommand('controls:update', commandPayload);
+    if (!sent) {
+      pendingControlUpdates.delete(controlId);
       setControlBusy(controlId, false);
+      showControlsMessage('No hay conexión con el backend.', 'danger');
     }
   }
 
   startBtn.addEventListener('click', function () {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ command: 'start', roi: getCurrentRoi() }));
+    const sent = sendCommand('start', { roi: getCurrentRoi() });
+    if (!sent) {
+      alerts.textContent = 'No hay conexión con el backend.';
     }
   });
 
   stopBtn.addEventListener('click', function () {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ command: 'stop' }));
+    const sent = sendCommand('stop');
+    if (!sent) {
+      alerts.textContent = 'No hay conexión con el backend.';
     }
   });
 

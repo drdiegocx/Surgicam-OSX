@@ -76,6 +76,40 @@ def _update_controls_cache(control: ControlInfo) -> None:
         _controls_cache_timestamp = time.monotonic()
 
 
+async def _list_controls_async(refresh: bool = False) -> List[ControlInfo]:
+    return await asyncio.to_thread(_controls_snapshot, refresh)
+
+
+async def _controls_payload(refresh: bool = False) -> List[Dict[str, Any]]:
+    controls = await _list_controls_async(refresh)
+    return [control.as_dict() for control in controls]
+
+
+async def _apply_control_update(
+    identifier: str, *, value: Any | None, action: str | None
+) -> ControlInfo:
+    if action is not None and action != "default":
+        raise ValueError("Acción no soportada")
+    if action is None and value is None:
+        raise ValueError("Debe indicar un valor o una acción")
+
+    controls = await _list_controls_async()
+    control_map = {item.identifier: item for item in controls}
+    target = control_map.get(identifier)
+    if target is None:
+        raise LookupError("Control no encontrado")
+
+    if action == "default":
+        updated = await asyncio.to_thread(reset_control, identifier, target)
+    else:
+        normalized = _normalize_value(target.as_dict(), value)
+        _validate_range(target.as_dict(), normalized)
+        updated = await asyncio.to_thread(set_control, identifier, normalized, target)
+
+    _update_controls_cache(updated)
+    return updated
+
+
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     preview_port = settings.USTREAMER_PORT
@@ -183,38 +217,108 @@ def _validate_range(control: Dict[str, Any], value: Any) -> None:
 @router.get("/api/controls", response_class=JSONResponse)
 async def get_controls(refresh: bool = False) -> JSONResponse:
     try:
-        controls = await asyncio.to_thread(_controls_snapshot, refresh)
+        payload = await _controls_payload(refresh)
     except V4L2Error as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    payload: List[Dict[str, Any]] = [control.as_dict() for control in controls]
     return JSONResponse(status_code=200, content={"controls": payload})
 
 
 @router.post("/api/controls/{identifier}", response_class=JSONResponse)
 async def update_control(identifier: str, update: ControlUpdate) -> JSONResponse:
     try:
-        controls = await asyncio.to_thread(_controls_snapshot)
-    except V4L2Error as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    control_map = {item.identifier: item for item in controls}
-    target = control_map.get(identifier)
-    if target is None:
-        raise HTTPException(status_code=404, detail="Control no encontrado")
-
-    try:
-        if update.action == "default":
-            updated = await asyncio.to_thread(reset_control, identifier, target)
-        else:
-            normalized = _normalize_value(target.as_dict(), update.value)
-            _validate_range(target.as_dict(), normalized)
-            updated = await asyncio.to_thread(set_control, identifier, normalized, target)
-    except V4L2Error as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        updated = await _apply_control_update(
+            identifier, value=update.value, action=update.action
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Control no encontrado") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except V4L2Error as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    _update_controls_cache(updated)
     return JSONResponse(status_code=200, content={"control": updated.as_dict()})
+
+
+async def _ws_emit_controls_list(
+    websocket: WebSocket,
+    *,
+    refresh: bool,
+    request_id: str | None,
+) -> None:
+    try:
+        payload = await _controls_payload(refresh)
+    except V4L2Error as exc:
+        await websocket.send_json(
+            {
+                "status": "controls:error",
+                "scope": "list",
+                "detail": str(exc),
+                "request_id": request_id,
+            }
+        )
+    else:
+        await websocket.send_json(
+            {
+                "status": "controls",
+                "scope": "list",
+                "controls": payload,
+                "request_id": request_id,
+            }
+        )
+
+
+async def _ws_apply_control(
+    websocket: WebSocket,
+    *,
+    identifier: str,
+    value: Any | None,
+    action: str | None,
+    request_id: str | None,
+) -> None:
+    try:
+        updated = await _apply_control_update(identifier, value=value, action=action)
+    except LookupError:
+        await websocket.send_json(
+            {
+                "status": "controls:error",
+                "scope": "update",
+                "identifier": identifier,
+                "detail": "Control no encontrado",
+                "request_id": request_id,
+            }
+        )
+    except ValueError as exc:
+        await websocket.send_json(
+            {
+                "status": "controls:error",
+                "scope": "update",
+                "identifier": identifier,
+                "detail": str(exc),
+                "request_id": request_id,
+                "refresh": True,
+            }
+        )
+    except V4L2Error as exc:
+        await websocket.send_json(
+            {
+                "status": "controls:error",
+                "scope": "update",
+                "identifier": identifier,
+                "detail": str(exc),
+                "request_id": request_id,
+                "refresh": True,
+            }
+        )
+    else:
+        await websocket.send_json(
+            {
+                "status": "controls",
+                "scope": "update",
+                "identifier": identifier,
+                "control": updated.as_dict(),
+                "request_id": request_id,
+            }
+        )
 
 
 async def _event_forwarder(websocket: WebSocket, queue: asyncio.Queue) -> None:
@@ -247,6 +351,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 )
                 continue
             command = payload.get("command")
+            request_id = payload.get("request_id")
             if command == "start":
                 roi_payload = payload.get("roi")
                 try:
@@ -278,6 +383,30 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     )
                 else:
                     await websocket.send_json(response)
+            elif command == "controls:list":
+                refresh = bool(payload.get("refresh"))
+                await _ws_emit_controls_list(
+                    websocket, refresh=refresh, request_id=request_id
+                )
+            elif command == "controls:update":
+                identifier = payload.get("identifier")
+                if not identifier:
+                    await websocket.send_json(
+                        {
+                            "status": "controls:error",
+                            "scope": "update",
+                            "detail": "Debe indicar el identificador del control.",
+                            "request_id": request_id,
+                        }
+                    )
+                    continue
+                await _ws_apply_control(
+                    websocket,
+                    identifier=identifier,
+                    value=payload.get("value"),
+                    action=payload.get("action"),
+                    request_id=request_id,
+                )
             else:
                 await websocket.send_json(
                     {
