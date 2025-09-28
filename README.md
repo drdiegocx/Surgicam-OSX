@@ -120,6 +120,12 @@ Ajusta la ruta al repositorio según tu despliegue.
 - Todos los cambios se envían mediante la API `/api/controls` y se validan en el backend para evitar valores fuera de rango.
 - La API acepta el parámetro `?refresh=1` para forzar una lectura completa de `v4l2-ctl`; por defecto reutiliza un caché de 1 segundo controlado por `MINIDVR_CONTROLS_CACHE_TTL`.
 
+## Vista previa interactiva
+
+- La imagen en vivo incluye zoom digital (1× a 4×) controlado por un deslizador de respuesta inmediata.
+- Un minimapa ROI superpuesto indica el encuadre activo y permite reubicarlo con un clic o arrastre.
+- Botones direccionales facilitan el *panning* fino incluso en pantallas táctiles; un botón central recentra la vista.
+
 ## Operación y métricas
 
 - La vista previa permanece activa aun cuando las grabaciones se inician o detienen.

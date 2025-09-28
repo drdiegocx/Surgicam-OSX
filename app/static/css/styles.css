@@ -19,8 +19,111 @@ h2,
   min-height: 1.5rem;
 }
 
-img#preview {
+.preview-frame {
+  position: relative;
+}
+
+.preview-viewport,
+.preview-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.preview-image {
   background: #000;
+  object-fit: cover;
+  transform-origin: top left;
+  transition: transform 0.12s ease-out;
+}
+
+.roi-controls {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 0.75rem;
+  z-index: 20;
+  background: rgba(16, 24, 32, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.5rem;
+  backdrop-filter: blur(4px);
+  min-width: 12rem;
+}
+
+.roi-controls-body {
+  padding: 0.75rem;
+}
+
+.roi-controls .form-range {
+  height: 1.5rem;
+}
+
+.roi-controls .btn {
+  flex: 1 1 auto;
+}
+
+.roi-pan-grid {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 0.35rem;
+}
+
+.roi-pan-grid > .roi-pan-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.roi-pan-grid > button {
+  width: 100%;
+}
+
+.roi-pan-row .btn {
+  width: 100%;
+}
+
+.roi-mini-map {
+  position: absolute;
+  bottom: 0.75rem;
+  right: 0.75rem;
+  width: 140px;
+  height: 78px;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.roi-mini-map-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.85;
+}
+
+.roi-indicator {
+  position: absolute;
+  border: 2px solid #0d6efd;
+  border-radius: 0.25rem;
+  box-shadow: 0 0 0.35rem rgba(13, 110, 253, 0.65);
+  pointer-events: none;
+}
+
+@media (max-width: 767.98px) {
+  .roi-controls {
+    min-width: 10rem;
+    bottom: 0.5rem;
+    left: 0.5rem;
+  }
+
+  .roi-mini-map {
+    width: 120px;
+    height: 67px;
+    bottom: 0.5rem;
+    right: 0.5rem;
+  }
 }
 
 .badge.bg-secondary {

@@ -20,8 +20,41 @@
       </header>
 
       <section class="preview mb-4">
-        <div class="ratio ratio-16x9 bg-dark rounded overflow-hidden">
-          <img id="preview" src="" alt="Vista previa en vivo" class="w-100 h-100 object-fit-cover" />
+        <div class="ratio ratio-16x9 bg-dark rounded overflow-hidden preview-frame" id="previewFrame">
+          <div class="preview-viewport" id="previewViewport">
+            <img id="preview" src="" alt="Vista previa en vivo" class="preview-image" />
+          </div>
+          <div class="roi-mini-map" id="roiMiniMap">
+            <img id="roiMiniMapImg" src="" alt="Mapa de vista" class="roi-mini-map-img" />
+            <div class="roi-indicator" id="roiIndicator"></div>
+          </div>
+          <div class="roi-controls" id="roiControls">
+            <div class="roi-controls-body">
+              <div class="d-flex align-items-center justify-content-between mb-2">
+                <span class="small fw-semibold text-uppercase">Zoom</span>
+                <span class="small" id="zoomValue">1.0x</span>
+              </div>
+              <input
+                type="range"
+                class="form-range"
+                id="zoomSlider"
+                min="100"
+                max="400"
+                step="10"
+                value="100"
+                aria-label="Zoom digital"
+              />
+              <div class="roi-pan-grid mt-2">
+                <button type="button" class="btn btn-outline-light btn-sm" data-pan="up" aria-label="Desplazar arriba">↑</button>
+                <div class="roi-pan-row">
+                  <button type="button" class="btn btn-outline-light btn-sm" data-pan="left" aria-label="Desplazar izquierda">←</button>
+                  <button type="button" class="btn btn-outline-light btn-sm" data-pan="center" aria-label="Centrar">•</button>
+                  <button type="button" class="btn btn-outline-light btn-sm" data-pan="right" aria-label="Desplazar derecha">→</button>
+                </div>
+                <button type="button" class="btn btn-outline-light btn-sm" data-pan="down" aria-label="Desplazar abajo">↓</button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

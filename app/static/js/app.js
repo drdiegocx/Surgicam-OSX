@@ -2,6 +2,12 @@
   const body = document.body;
   const previewPort = body.dataset.previewPort;
   const previewImg = document.getElementById('preview');
+  const previewFrame = document.getElementById('previewFrame');
+  const miniMap = document.getElementById('roiMiniMap');
+  const miniMapImg = document.getElementById('roiMiniMapImg');
+  const roiIndicator = document.getElementById('roiIndicator');
+  const zoomSlider = document.getElementById('zoomSlider');
+  const zoomValue = document.getElementById('zoomValue');
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
   const previewState = document.getElementById('previewState');
@@ -24,12 +30,175 @@
   const protocol = window.location.protocol === 'https:' ? 'https://' : 'http://';
   const streamUrl = `${protocol}${window.location.hostname}:${previewPort}/stream`;
   previewImg.src = streamUrl;
+  if (miniMapImg) {
+    miniMapImg.src = streamUrl;
+  }
 
   let socket;
   let reconnectTimer;
 
+  const panButtons = document.querySelectorAll('[data-pan]');
+  const minZoom = zoomSlider ? Math.max(1, (Number(zoomSlider.min) / 100) || 1) : 1;
+  const maxZoom = zoomSlider ? Math.max(minZoom, (Number(zoomSlider.max) / 100) || minZoom) : 1;
+  const defaultZoom = zoomSlider
+    ? Math.min(maxZoom, Math.max(minZoom, (Number(zoomSlider.value) / 100) || minZoom))
+    : 1;
+  let zoomLevel = defaultZoom;
+  let panX = 0;
+  let panY = 0;
+
   startBtn.disabled = true;
   stopBtn.disabled = true;
+
+  function clampPan() {
+    const maxOffset = Math.max(0, 1 - 1 / zoomLevel);
+    panX = Math.min(Math.max(panX, 0), maxOffset);
+    panY = Math.min(Math.max(panY, 0), maxOffset);
+  }
+
+  function updateZoomDisplay() {
+    if (zoomValue) {
+      zoomValue.textContent = `${zoomLevel.toFixed(1)}x`;
+    }
+    if (zoomSlider) {
+      const sliderValue = Math.round(zoomLevel * 100);
+      if (Number(zoomSlider.value) !== sliderValue) {
+        zoomSlider.value = String(sliderValue);
+      }
+    }
+  }
+
+  function applyPanZoom() {
+    clampPan();
+    if (previewImg) {
+      previewImg.style.transform = `translate(${-panX * 100}%, ${-panY * 100}%) scale(${zoomLevel})`;
+    }
+    if (roiIndicator) {
+      const viewportWidth = Math.min(100, 100 / zoomLevel);
+      const viewportHeight = Math.min(100, 100 / zoomLevel);
+      roiIndicator.style.width = `${viewportWidth}%`;
+      roiIndicator.style.height = `${viewportHeight}%`;
+      roiIndicator.style.left = `${panX * 100}%`;
+      roiIndicator.style.top = `${panY * 100}%`;
+    }
+    updateZoomDisplay();
+  }
+
+  function setZoomLevel(value) {
+    const desired = Number.isFinite(value) ? value : zoomLevel;
+    const bounded = Math.min(Math.max(desired, minZoom), maxZoom);
+    if (bounded === zoomLevel) {
+      applyPanZoom();
+      return;
+    }
+    const currentCenterX = panX + 0.5 / zoomLevel;
+    const currentCenterY = panY + 0.5 / zoomLevel;
+    zoomLevel = bounded;
+    panX = currentCenterX - 0.5 / zoomLevel;
+    panY = currentCenterY - 0.5 / zoomLevel;
+    applyPanZoom();
+  }
+
+  function centerPan() {
+    const maxOffset = Math.max(0, 1 - 1 / zoomLevel);
+    panX = maxOffset / 2;
+    panY = maxOffset / 2;
+    applyPanZoom();
+  }
+
+  function nudgePan(deltaX, deltaY) {
+    panX += deltaX;
+    panY += deltaY;
+    applyPanZoom();
+  }
+
+  function handleMiniMapClick(event) {
+    if (!miniMap) {
+      return;
+    }
+    const rect = miniMap.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return;
+    }
+    const relativeX = (event.clientX - rect.left) / rect.width;
+    const relativeY = (event.clientY - rect.top) / rect.height;
+    panX = relativeX - 0.5 / zoomLevel;
+    panY = relativeY - 0.5 / zoomLevel;
+    applyPanZoom();
+  }
+
+  function handlePreviewClick(event) {
+    if (!previewFrame) {
+      return;
+    }
+    if (event.target && (event.target.closest('.roi-controls') || event.target.closest('.roi-mini-map'))) {
+      return;
+    }
+    const rect = previewFrame.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return;
+    }
+    const relativeX = (event.clientX - rect.left) / rect.width;
+    const relativeY = (event.clientY - rect.top) / rect.height;
+    panX = relativeX - 0.5 / zoomLevel;
+    panY = relativeY - 0.5 / zoomLevel;
+    applyPanZoom();
+  }
+
+  if (zoomSlider) {
+    zoomSlider.addEventListener('input', function (event) {
+      const value = Number(event.target.value);
+      if (!Number.isNaN(value)) {
+        setZoomLevel(value / 100);
+      }
+    });
+  }
+
+  if (miniMap) {
+    miniMap.addEventListener('click', handleMiniMapClick);
+    miniMap.addEventListener('mousemove', function (event) {
+      if (event.buttons === 1) {
+        handleMiniMapClick(event);
+      }
+    });
+  }
+
+  if (previewFrame) {
+    previewFrame.addEventListener('click', handlePreviewClick);
+  }
+
+  if (panButtons && panButtons.length) {
+    panButtons.forEach(function (button) {
+      button.addEventListener('click', function () {
+        const direction = button.dataset.pan;
+        if (!direction) {
+          return;
+        }
+        const step = 0.18 / zoomLevel;
+        switch (direction) {
+          case 'up':
+            nudgePan(0, -step);
+            break;
+          case 'down':
+            nudgePan(0, step);
+            break;
+          case 'left':
+            nudgePan(-step, 0);
+            break;
+          case 'right':
+            nudgePan(step, 0);
+            break;
+          case 'center':
+            centerPan();
+            break;
+          default:
+            break;
+        }
+      });
+    });
+  }
+
+  applyPanZoom();
 
   function setBadge(element, state) {
     element.textContent = state === 'running' ? 'Activo' : 'Detenido';
