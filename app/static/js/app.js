@@ -385,7 +385,7 @@
     }
     const control = data.control;
     updateControlUI(control);
-    const identifier = control.identifier;
+    const identifier = control.identifier || control.id;
     if (identifier) {
       setControlBusy(identifier, false);
       if (pendingControlUpdates.has(identifier)) {
@@ -620,7 +620,8 @@
   }
 
   function updateControlUI(control) {
-    const entry = controlElements.get(control.id);
+    const controlId = control.id || control.identifier;
+    const entry = controlElements.get(controlId);
     if (!entry) {
       return;
     }
