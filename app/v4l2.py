@@ -7,6 +7,14 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+_CONTROL_LINE_PATTERN = re.compile(
+    r"^(?P<identifier>[A-Za-z0-9_]+)\s+0x[0-9a-fA-F]+\s+\((?P<type>[^)]+)\)\s*:\s*(?P<rest>.*)$"
+)
+_MENU_OPTION_PATTERN = re.compile(
+    r"^(?P<value>-?\d+):\s*(?:\"(?P<label>[^\"]*)\"|(?P<label_plain>.*))$"
+)
+_KEY_VALUE_PATTERN = re.compile(r"(\w+)=([^\s]+)")
+
 from .config import settings
 
 
@@ -75,25 +83,31 @@ def _run_v4l2ctl(args: List[str]) -> str:
 def _parse_menu_output(raw: str) -> Dict[str, List[ControlOption]]:
     menus: Dict[str, List[ControlOption]] = {}
     current: Optional[str] = None
-    header_pattern = re.compile(r"^([\w\-]+)\s+\((?:menu|intmenu|integer menu)\)$", re.IGNORECASE)
-    option_pattern = re.compile(r"^(\d+):\s*(?:\"([^\"]*)\"|(.*))$")
 
     for line in raw.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
-        header_match = header_pattern.match(stripped)
-        if header_match:
-            current = header_match.group(1)
-            menus[current] = []
+
+        control_match = _CONTROL_LINE_PATTERN.match(stripped)
+        if control_match:
+            identifier = control_match.group("identifier")
+            ctrl_type = control_match.group("type").lower()
+            if "menu" in ctrl_type:
+                current = identifier
+                menus.setdefault(identifier, [])
+            else:
+                current = None
             continue
+
         if current is None:
             continue
-        option_match = option_pattern.match(stripped)
+
+        option_match = _MENU_OPTION_PATTERN.match(stripped)
         if option_match:
-            value = int(option_match.group(1))
-            label = option_match.group(2) or option_match.group(3) or ""
-            menus[current].append(ControlOption(value=value, label=label))
+            value = int(option_match.group("value"))
+            label = option_match.group("label") or option_match.group("label_plain") or ""
+            menus[current].append(ControlOption(value=value, label=label.strip()))
     return menus
 
 
@@ -105,23 +119,60 @@ def _parse_controls_json(raw: str) -> Dict[str, Dict[str, Any]]:
     return payload
 
 
-def list_controls() -> List[ControlInfo]:
-    """Obtiene y normaliza la lista de controles disponibles."""
+def _humanize_identifier(identifier: str) -> str:
+    return identifier.replace("_", " ").strip().title()
 
-    raw_controls = _run_v4l2ctl(["--list-ctrls-json"])
-    data = _parse_controls_json(raw_controls)
-    menu_output = _run_v4l2ctl(["--list-ctrls-menus"])
-    menus = _parse_menu_output(menu_output)
 
+def _split_flags(raw: Optional[str]) -> Optional[List[str]]:
+    if not raw:
+        return None
+    return [flag.strip() for flag in raw.split(",") if flag.strip()]
+
+
+def _coerce_numeric(raw: Optional[str]) -> Optional[int]:
+    if raw is None:
+        return None
+    try:
+        return int(raw, 0)
+    except ValueError:
+        return None
+
+
+def _coerce_value(raw: Optional[str], ctrl_type: str) -> Any:
+    if raw is None:
+        return None
+    lowered = ctrl_type.lower()
+    if lowered in {"bool", "boolean"}:
+        return raw not in {"0", "false", "no"}
+    if lowered in {"menu", "intmenu", "integer_menu", "integer menu", "int", "integer", "int64"}:
+        try:
+            return int(raw, 0)
+        except ValueError:
+            return raw
+    if lowered in {"float", "double"}:
+        try:
+            return float(raw)
+        except ValueError:
+            return raw
+    return raw
+
+
+def _build_from_json(
+    data: Dict[str, Dict[str, Any]], menus: Dict[str, List[ControlOption]]
+) -> List[ControlInfo]:
     controls: List[ControlInfo] = []
     for identifier, control in data.items():
-        options: Optional[List[ControlOption]] = None
         ctrl_type = control.get("type", "")
-        if ctrl_type.lower() in {"menu", "intmenu", "integer_menu", "integer menu"}:
-            options = menus.get(identifier)
+        raw_flags = control.get("flags")
+        if isinstance(raw_flags, list):
+            flags = [str(flag) for flag in raw_flags]
+        elif isinstance(raw_flags, str):
+            flags = _split_flags(raw_flags)
+        else:
+            flags = None
         info = ControlInfo(
             identifier=identifier,
-            name=control.get("name", identifier.replace("_", " ").title()),
+            name=control.get("name", _humanize_identifier(identifier)),
             type=ctrl_type,
             value=control.get("value"),
             default=control.get("default"),
@@ -129,10 +180,69 @@ def list_controls() -> List[ControlInfo]:
             maximum=control.get("max"),
             step=control.get("step"),
             category=control.get("category"),
-            flags=control.get("flags"),
-            options=options,
+            flags=flags,
+            options=menus.get(identifier),
         )
         controls.append(info)
+    return controls
+
+
+def _build_from_text(raw: str, menus: Dict[str, List[ControlOption]]) -> List[ControlInfo]:
+    controls: List[ControlInfo] = []
+    category: Optional[str] = None
+
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        match = _CONTROL_LINE_PATTERN.match(stripped)
+        if match:
+            identifier = match.group("identifier")
+            ctrl_type = match.group("type").strip()
+            attributes = match.group("rest")
+            pairs = {key: value for key, value in _KEY_VALUE_PATTERN.findall(attributes)}
+
+            control = ControlInfo(
+                identifier=identifier,
+                name=_humanize_identifier(identifier),
+                type=ctrl_type,
+                value=_coerce_value(pairs.get("value"), ctrl_type),
+                default=_coerce_value(pairs.get("default"), ctrl_type),
+                minimum=_coerce_numeric(pairs.get("min")),
+                maximum=_coerce_numeric(pairs.get("max")),
+                step=_coerce_numeric(pairs.get("step")),
+                category=category,
+                flags=_split_flags(pairs.get("flags")),
+                options=menus.get(identifier),
+            )
+            controls.append(control)
+            continue
+
+        if ":" not in stripped and "(" not in stripped:
+            category = stripped
+
+    return controls
+
+
+def list_controls() -> List[ControlInfo]:
+    """Obtiene y normaliza la lista de controles disponibles."""
+
+    try:
+        menu_output = _run_v4l2ctl(["--list-ctrls-menus"])
+    except V4L2Error:
+        menus: Dict[str, List[ControlOption]] = {}
+    else:
+        menus = _parse_menu_output(menu_output)
+
+    try:
+        raw_controls = _run_v4l2ctl(["--list-ctrls-json"])
+    except V4L2Error:
+        legacy_output = _run_v4l2ctl(["--list-ctrls"])
+        controls = _build_from_text(legacy_output, menus)
+    else:
+        data = _parse_controls_json(raw_controls)
+        controls = _build_from_json(data, menus)
 
     controls.sort(key=lambda ctrl: ((ctrl.category or "").lower(), ctrl.name.lower()))
     return controls
@@ -160,3 +270,4 @@ def reset_control(identifier: str) -> ControlInfo:
             f"El control '{identifier}' no tiene valor predeterminado conocido"
         )
     return set_control(identifier, control.default)
+
