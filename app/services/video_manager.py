@@ -110,7 +110,6 @@ class VideoManager:
                 "--resolution",
                 f"{width}x{height}",
                 "--persistent",
-                "--drop-same-frames",
                 "--allow-origin",
                 "*",
             ]
