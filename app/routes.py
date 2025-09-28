@@ -10,7 +10,7 @@ from threading import Lock
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -136,6 +136,36 @@ async def health() -> JSONResponse:
 @router.get("/status", response_class=JSONResponse)
 async def status() -> JSONResponse:
     return JSONResponse(status_code=200, content=manager.status_snapshot())
+
+
+@router.get("/api/media", response_class=JSONResponse)
+async def media_index() -> JSONResponse:
+    return JSONResponse(status_code=200, content=manager.list_media())
+
+
+@router.get("/media/{category}/{name}")
+async def media_download(category: str, name: str) -> FileResponse:
+    try:
+        path = manager.resolve_media_path(category, name)
+    except ValueError as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado.") from exc
+    return FileResponse(path, filename=path.name)
+
+
+@router.delete("/api/media/{category}/{name}", response_class=JSONResponse)
+async def media_delete(category: str, name: str) -> JSONResponse:
+    try:
+        payload = await manager.delete_media(category, name)
+    except ValueError as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado.") from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Error al eliminar medio: %s", exc)
+        raise HTTPException(status_code=500, detail="No se pudo eliminar el recurso.") from exc
+    return JSONResponse(status_code=200, content=payload)
 
 
 class ControlUpdate(BaseModel):
@@ -407,6 +437,23 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     action=payload.get("action"),
                     request_id=request_id,
                 )
+            elif command == "snapshot":
+                try:
+                    media = await manager.capture_snapshot()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Error al capturar fotografía: %s", exc)
+                    response = {
+                        "status": "snapshot:error",
+                        "detail": "No se pudo capturar la fotografía.",
+                    }
+                    if request_id:
+                        response["request_id"] = request_id
+                    await websocket.send_json(response)
+                else:
+                    response = {"status": "snapshot:saved", "media": media}
+                    if request_id:
+                        response["request_id"] = request_id
+                    await websocket.send_json(response)
             else:
                 await websocket.send_json(
                     {

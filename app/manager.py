@@ -5,10 +5,12 @@ import asyncio
 import logging
 import signal
 import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .config import settings
 
@@ -100,6 +102,8 @@ class RecorderManager:
     def __init__(self) -> None:
         self.recordings_dir: Path = settings.RECORDINGS_DIR
         self.recordings_dir.mkdir(parents=True, exist_ok=True)
+        self.snapshots_dir: Path = settings.SNAPSHOTS_DIR
+        self.snapshots_dir.mkdir(parents=True, exist_ok=True)
         self._ustreamer_process: Optional[subprocess.Popen] = None
         self._ffmpeg_process: Optional[subprocess.Popen] = None
         self._ffmpeg_info: Optional[ProcessInfo] = None
@@ -351,6 +355,15 @@ class RecorderManager:
         if last_segment:
             event["file"] = last_segment
         await self.events.broadcast(event)
+        if last_segment:
+            video_path = self.recordings_dir / last_segment
+            if video_path.exists():
+                await self.events.broadcast(
+                    {
+                        "status": "media:new",
+                        "media": self._build_media_entry(video_path, "videos"),
+                    }
+                )
         return event
 
     async def _monitor_ffmpeg(self) -> None:
@@ -407,3 +420,92 @@ class RecorderManager:
             if self._ffmpeg_info.roi:
                 info["roi"] = self._ffmpeg_info.roi.as_dict()
         return info
+
+    def _build_media_entry(self, path: Path, category: str) -> Dict[str, Any]:
+        stat = path.stat()
+        return {
+            "name": path.name,
+            "category": category,
+            "size": stat.st_size,
+            "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "url": f"/media/{category}/{path.name}",
+        }
+
+    def list_media(self) -> Dict[str, List[Dict[str, Any]]]:
+        photos: List[Dict[str, Any]] = []
+        if self.snapshots_dir.exists():
+            photo_paths = [
+                item
+                for item in self.snapshots_dir.glob("*")
+                if item.is_file() and not item.name.startswith(".")
+            ]
+            photo_paths.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+            photos = [self._build_media_entry(path, "photos") for path in photo_paths]
+
+        videos: List[Dict[str, Any]] = []
+        if self.recordings_dir.exists():
+            video_paths = [
+                item
+                for item in self.recordings_dir.glob("*.mp4")
+                if item.is_file() and not item.name.startswith(".")
+            ]
+            video_paths.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+            videos = [self._build_media_entry(path, "videos") for path in video_paths]
+
+        return {"photos": photos, "videos": videos}
+
+    def resolve_media_path(self, category: str, name: str) -> Path:
+        safe_name = Path(name).name
+        if safe_name != name:
+            raise ValueError("Nombre de archivo inválido.")
+
+        if category == "photos":
+            base_dir = self.snapshots_dir
+        elif category == "videos":
+            base_dir = self.recordings_dir
+        else:
+            raise ValueError("Tipo de medio no soportado.")
+
+        path = base_dir / safe_name
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(f"No se encontró el recurso {safe_name}.")
+        return path
+
+    async def capture_snapshot(self) -> Dict[str, Any]:
+        await self.ensure_preview()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}.jpg"
+        target = self.snapshots_dir / filename
+        sequence = 1
+        while target.exists():
+            filename = f"{timestamp}_{sequence:02d}.jpg"
+            target = self.snapshots_dir / filename
+            sequence += 1
+
+        snapshot_url = f"http://127.0.0.1:{settings.USTREAMER_PORT}/snapshot"
+
+        def _download() -> None:
+            request = urllib.request.Request(snapshot_url)
+            with urllib.request.urlopen(request, timeout=5) as response:
+                data = response.read()
+            target.write_bytes(data)
+
+        try:
+            await asyncio.to_thread(_download)
+        except (urllib.error.URLError, TimeoutError) as exc:
+            logger.error("No se pudo obtener la instantánea: %s", exc)
+            raise
+
+        media = self._build_media_entry(target, "photos")
+        await self.events.broadcast({"status": "media:new", "media": media})
+        return media
+
+    async def delete_media(self, category: str, name: str) -> Dict[str, Any]:
+        path = self.resolve_media_path(category, name)
+        if category == "videos" and self._ffmpeg_info and name == self._ffmpeg_info.first_segment:
+            raise ValueError("No se puede eliminar un video en uso.")
+
+        await asyncio.to_thread(path.unlink)
+        payload = {"category": category, "name": name}
+        await self.events.broadcast({"status": "media:removed", "media": payload})
+        return payload

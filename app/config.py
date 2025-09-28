@@ -18,6 +18,10 @@ class Settings:
     USTREAMER_RESOLUTION: str = os.getenv("MINIDVR_RESOLUTION", "1280x720")
     USTREAMER_FPS: int = int(os.getenv("MINIDVR_FPS", 30))
 
+    SNAPSHOTS_DIR: Path = Path(
+        os.getenv("MINIDVR_SNAPSHOTS_DIR", RECORDINGS_DIR / "photos")
+    )
+
     APP_HOST: str = os.getenv("MINIDVR_APP_HOST", "0.0.0.0")
     APP_PORT: int = int(os.getenv("MINIDVR_APP_PORT", 8080))
 

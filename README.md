@@ -29,7 +29,7 @@ app/
     js/app.js
   templates/index.html
 recordings/
-  .gitkeep
+  photos/
 scripts/
   install.sh
   cleanup_recordings.sh
@@ -52,7 +52,7 @@ El script realiza lo siguiente:
 1. Habilita la cámara vía `raspi-config` (modo no interactivo).
 2. Instala dependencias del sistema (`ustreamer`, `ffmpeg`, `python3-venv`, `python3-pip`).
 3. Crea un entorno virtual en `.venv` e instala los paquetes Python.
-4. Asegura el directorio `recordings/` con permisos de escritura.
+4. Asegura los directorios `recordings/` y `recordings/photos/` con permisos de escritura.
 
 > **Nota:** si el usuario final no es `pi`, ajusta el propietario del directorio `recordings/` y el servicio systemd según corresponda.
 
@@ -89,7 +89,7 @@ El servicio utiliza `Restart=always` para mantener los procesos en marcha. Los l
 
 ## Limpieza de grabaciones
 
-Utiliza el script `scripts/cleanup_recordings.sh` para eliminar segmentos con más de 7 días:
+Utiliza el script `scripts/cleanup_recordings.sh` para eliminar segmentos y fotografías con más de 7 días:
 
 ```bash
 bash scripts/cleanup_recordings.sh /home/pi/recordings
@@ -108,9 +108,12 @@ Ajusta la ruta al repositorio según tu despliegue.
 - `GET /` – Interfaz web con la vista previa MJPEG y controles.
 - `GET /health` – Health-check que verifica los procesos de uStreamer y FFmpeg.
 - `GET /status` – Estado actual del sistema y metadatos de la grabación.
-- `WS /ws` – Canal WebSocket para comandos de inicio/detención y notificaciones.
+- `WS /ws` – Canal WebSocket para comandos de inicio/detención, captura de fotografías y notificaciones.
 - `GET /api/controls` – Devuelve los controles V4L2 disponibles, incluyendo rangos, valores y opciones.
 - `POST /api/controls/{id}` – Ajusta o restablece un control específico.
+- `GET /api/media` – Lista las fotografías (JPG) y videos (MP4) disponibles en disco.
+- `GET /media/{tipo}/{archivo}` – Descarga directa de una fotografía o segmento de video.
+- `DELETE /api/media/{tipo}/{archivo}` – Elimina un recurso multimedia desde la galería web.
 
 ## Panel de ajustes de cámara
 
@@ -125,6 +128,14 @@ Ajusta la ruta al repositorio según tu despliegue.
 - La imagen en vivo incluye zoom digital (1× a 4×) controlado por un deslizador de respuesta inmediata.
 - Un minimapa ROI cuadrado (200×200 px) fijado en la esquina superior derecha refleja el encuadre actual y admite clic o arrastre para reposicionarlo.
 - Botones direccionales facilitan el *panning* fino incluso en pantallas táctiles; un botón central recentra la vista.
+- Una marca de agua semitransparente con la leyenda **SURGICAM** identifica la transmisión sin obstruir el contenido quirúrgico.
+
+## Capturas y galería de medios
+
+- El botón **Capturar foto** solicita al backend una instantánea del flujo MJPEG (vía `/snapshot` de uStreamer) sin interrumpir la vista previa ni las grabaciones activas.
+- Las fotografías se guardan en `recordings/photos/` con nomenclatura basada en la fecha y se publican inmediatamente en la galería, junto a los segmentos MP4 existentes.
+- Desde la galería web es posible descargar o eliminar fotos y videos; cualquier cambio se replica al resto de clientes en tiempo real mediante eventos WebSocket.
+- La ruta de almacenamiento puede redefinirse mediante la variable de entorno `MINIDVR_SNAPSHOTS_DIR` si se requiere un volumen distinto.
 
 ## Operación y métricas
 
@@ -150,6 +161,7 @@ Ajusta la ruta al repositorio según tu despliegue.
 - **Sin imagen en la vista previa:** verifica `journalctl -u mini-dvr.service` y confirma que `ustreamer` detecte la cámara (`v4l2-ctl --list-formats-ext`).
 - **Grabación no inicia:** inspecciona permisos de escritura en `~/recordings` y que la URL de `MINIDVR_STREAM_URL` sea accesible desde la Raspberry.
 - **Latencia alta:** revisa la red local y confirma que no haya recortes innecesarios; si el ROI cubre todo el cuadro FFmpeg usa `-c copy`, de lo contrario se transcodifica con `libx264`.
+- **No aparecen capturas en la galería:** verifica los permisos de `recordings/photos/` y comprueba que `http://127.0.0.1:8000/snapshot` responda desde la Raspberry Pi.
 
 ## Licencia
 

@@ -13,10 +13,18 @@
   const zoomValue = document.getElementById('zoomValue');
   const startBtn = document.getElementById('startBtn');
   const stopBtn = document.getElementById('stopBtn');
+  const snapshotBtn = document.getElementById('snapshotBtn');
   const previewState = document.getElementById('previewState');
   const recordState = document.getElementById('recordState');
   const fileInfo = document.getElementById('fileInfo');
   const alerts = document.getElementById('alerts');
+
+  const refreshGalleryBtn = document.getElementById('refreshGalleryBtn');
+  const photoGallery = document.getElementById('photoGallery');
+  const videoGallery = document.getElementById('videoGallery');
+  const galleryEmpty = document.getElementById('galleryEmpty');
+  const photoSummary = document.getElementById('photoSummary');
+  const videoSummary = document.getElementById('videoSummary');
 
   const controlsDrawer = document.getElementById('controlsDrawer');
   const controlsLoading = document.getElementById('controlsLoading');
@@ -83,6 +91,254 @@
 
   startBtn.disabled = true;
   stopBtn.disabled = true;
+  if (snapshotBtn) {
+    snapshotBtn.disabled = true;
+  }
+
+  const userLocale = navigator.language || 'es-MX';
+  const dateFormatter = new Intl.DateTimeFormat(userLocale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+  const snapshotLabel = snapshotBtn ? snapshotBtn.textContent.trim() : '';
+  const refreshGalleryLabel = refreshGalleryBtn
+    ? refreshGalleryBtn.textContent.trim()
+    : '';
+  let snapshotBusy = false;
+  let isGalleryLoading = false;
+
+  function updateSnapshotAvailability() {
+    if (!snapshotBtn) {
+      return;
+    }
+    const isConnected = socket && socket.readyState === WebSocket.OPEN;
+    snapshotBtn.disabled = snapshotBusy || !isConnected;
+  }
+
+  function setSnapshotBusy(isBusy, labelText) {
+    if (!snapshotBtn) {
+      return;
+    }
+    snapshotBusy = Boolean(isBusy);
+    snapshotBtn.classList.toggle('is-busy', snapshotBusy);
+    if (snapshotBusy) {
+      snapshotBtn.textContent = labelText || 'Capturando…';
+    } else {
+      snapshotBtn.textContent = snapshotLabel;
+    }
+    updateSnapshotAvailability();
+  }
+
+  function formatBytes(bytes) {
+    const value = Number(bytes);
+    if (!Number.isFinite(value) || value <= 0) {
+      return '0 B';
+    }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let index = 0;
+    let result = value;
+    while (result >= 1024 && index < units.length - 1) {
+      result /= 1024;
+      index += 1;
+    }
+    const formatted = result >= 10 || index === 0 ? result.toFixed(0) : result.toFixed(1);
+    return `${formatted} ${units[index]}`;
+  }
+
+  function renderMediaList(entries, container, summaryEl, category) {
+    if (!container) {
+      return;
+    }
+
+    container.innerHTML = '';
+    const list = Array.isArray(entries) ? entries : [];
+    if (summaryEl) {
+      summaryEl.textContent = list.length
+        ? `${list.length} ${list.length === 1 ? 'archivo' : 'archivos'}`
+        : 'Sin elementos';
+    }
+
+    if (!list.length) {
+      return;
+    }
+
+    const now = Date.now();
+    list.forEach(function (entry) {
+      const item = document.createElement('article');
+      item.className = 'media-item';
+
+      const thumb = document.createElement('div');
+      thumb.className = 'media-thumb';
+      if (category === 'photos') {
+        const img = document.createElement('img');
+        const cacheBuster = entry.created_at ? encodeURIComponent(entry.created_at) : now;
+        img.src = `${entry.url}?_=${cacheBuster}`;
+        img.alt = entry.name ? `Fotografía ${entry.name}` : 'Fotografía capturada';
+        thumb.appendChild(img);
+      } else {
+        thumb.classList.add('media-thumb-video');
+        thumb.textContent = 'MP4';
+      }
+      item.appendChild(thumb);
+
+      const body = document.createElement('div');
+      body.className = 'media-body';
+      const title = document.createElement('span');
+      title.className = 'media-name';
+      title.textContent = entry.name || 'Archivo sin nombre';
+      body.appendChild(title);
+
+      const meta = document.createElement('div');
+      meta.className = 'media-meta';
+      const metaParts = [];
+      if (entry.created_at) {
+        const parsedDate = new Date(entry.created_at);
+        if (!Number.isNaN(parsedDate.getTime())) {
+          metaParts.push(dateFormatter.format(parsedDate));
+        }
+      }
+      if (entry.size !== undefined) {
+        metaParts.push(formatBytes(entry.size));
+      }
+      meta.textContent = metaParts.join(' · ');
+      body.appendChild(meta);
+
+      item.appendChild(body);
+
+      const actions = document.createElement('div');
+      actions.className = 'media-actions';
+      if (entry.url) {
+        const link = document.createElement('a');
+        link.className = 'btn btn-sm btn-outline-light';
+        link.href = entry.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = category === 'videos' ? 'Descargar' : 'Ver';
+        actions.appendChild(link);
+      }
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn btn-sm btn-outline-danger';
+      deleteBtn.dataset.action = 'delete';
+      deleteBtn.dataset.mediaType = category;
+      deleteBtn.dataset.mediaName = entry.name || '';
+      deleteBtn.textContent = 'Eliminar';
+      actions.appendChild(deleteBtn);
+
+      item.appendChild(actions);
+      container.appendChild(item);
+    });
+  }
+
+  function syncGalleryEmptyState(photoCount, videoCount) {
+    if (!galleryEmpty) {
+      return;
+    }
+    const hasMedia = photoCount + videoCount > 0;
+    galleryEmpty.classList.toggle('d-none', hasMedia);
+    if (!hasMedia) {
+      galleryEmpty.textContent = 'No hay fotografías ni videos almacenados.';
+    }
+  }
+
+  function loadMediaGallery() {
+    if (isGalleryLoading) {
+      return;
+    }
+    isGalleryLoading = true;
+    if (refreshGalleryBtn) {
+      refreshGalleryBtn.disabled = true;
+      refreshGalleryBtn.textContent = 'Actualizando…';
+    }
+    fetch('/api/media')
+      .then(function (response) {
+        if (!response.ok) {
+          return response.json().catch(function () {
+            return {};
+          }).then(function (payload) {
+            const message = payload && payload.detail ? payload.detail : 'No se pudo cargar la galería.';
+            throw new Error(message);
+          });
+        }
+        return response.json();
+      })
+      .then(function (data) {
+        const photos = Array.isArray(data.photos) ? data.photos : [];
+        const videos = Array.isArray(data.videos) ? data.videos : [];
+        renderMediaList(photos, photoGallery, photoSummary, 'photos');
+        renderMediaList(videos, videoGallery, videoSummary, 'videos');
+        syncGalleryEmptyState(photos.length, videos.length);
+      })
+      .catch(function (error) {
+        console.error('Error al cargar la galería', error);
+        if (galleryEmpty) {
+          galleryEmpty.textContent = error.message || 'No se pudo cargar la galería.';
+          galleryEmpty.classList.remove('d-none');
+        }
+        if (alerts && !alerts.textContent) {
+          alerts.textContent = 'No se pudo actualizar la galería de medios.';
+        }
+      })
+      .finally(function () {
+        isGalleryLoading = false;
+        if (refreshGalleryBtn) {
+          refreshGalleryBtn.disabled = false;
+          refreshGalleryBtn.textContent = refreshGalleryLabel || 'Actualizar';
+        }
+      });
+  }
+
+  function handleGalleryClick(event) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) {
+      return;
+    }
+    const button = target.closest('button[data-action="delete"]');
+    if (!button) {
+      return;
+    }
+    const mediaType = button.dataset.mediaType || '';
+    const mediaName = button.dataset.mediaName || '';
+    if (!mediaType || !mediaName) {
+      return;
+    }
+    const encodedType = encodeURIComponent(mediaType);
+    const encodedName = encodeURIComponent(mediaName);
+    const endpoint = `/api/media/${encodedType}/${encodedName}`;
+    const originalText = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Eliminando…';
+    fetch(endpoint, { method: 'DELETE' })
+      .then(function (response) {
+        if (!response.ok) {
+          return response.json().catch(function () {
+            return {};
+          }).then(function (payload) {
+            const detail = payload && payload.detail ? payload.detail : 'No se pudo eliminar el recurso.';
+            throw new Error(detail);
+          });
+        }
+        return response.json();
+      })
+      .then(function () {
+        if (alerts) {
+          const label = mediaType === 'photos' ? 'fotografía' : 'video';
+          alerts.textContent = `Se eliminó la ${label} ${mediaName}.`;
+        }
+        loadMediaGallery();
+      })
+      .catch(function (error) {
+        console.error('Error al eliminar medio', error);
+        if (alerts) {
+          alerts.textContent = error.message || 'No se pudo eliminar el recurso.';
+        }
+      })
+      .finally(function () {
+        button.disabled = false;
+        button.textContent = originalText || 'Eliminar';
+      });
+  }
 
   function clampPan() {
     const maxOffset = Math.max(0, 1 - 1 / zoomLevel);
@@ -323,6 +579,9 @@
   }
 
   function handleEvent(data) {
+    if (!data || typeof data !== 'object') {
+      return;
+    }
     if (data.status === 'controls') {
       const scope = data.scope || 'list';
       if (scope === 'update') {
@@ -338,6 +597,40 @@
       return;
     }
 
+    if (data.status === 'snapshot:saved') {
+      setSnapshotBusy(false);
+      if (alerts) {
+        const media = data.media || {};
+        const name = media.name ? ` ${media.name}` : '';
+        alerts.textContent = `Fotografía guardada${name}.`;
+      }
+      loadMediaGallery();
+      return;
+    }
+
+    if (data.status === 'snapshot:error') {
+      setSnapshotBusy(false);
+      if (alerts) {
+        alerts.textContent = data.detail || 'No se pudo capturar la fotografía.';
+      }
+      return;
+    }
+
+    if (data.status === 'media:new') {
+      loadMediaGallery();
+      if (alerts && data.media) {
+        const category = data.media.category === 'videos' ? 'video' : 'fotografía';
+        const suffix = data.media.name ? ` ${data.media.name}` : '';
+        alerts.textContent = `Nuevo ${category} disponible${suffix}.`;
+      }
+      return;
+    }
+
+    if (data.status === 'media:removed') {
+      loadMediaGallery();
+      return;
+    }
+
     if (data.preview) {
       setBadge(previewState, data.preview === 'running' ? 'running' : 'stopped');
     }
@@ -347,16 +640,19 @@
       } else {
         setRecordingState('idle');
       }
+      updateSnapshotAvailability();
       return;
     }
     if (data.status === 'recording') {
       setRecordingState('recording', data.file);
       alerts.textContent = '';
+      updateSnapshotAvailability();
       return;
     }
     if (data.status === 'idle') {
       setRecordingState('idle', data.file);
       alerts.textContent = '';
+      updateSnapshotAvailability();
       return;
     }
     if (data.status === 'error') {
@@ -364,6 +660,7 @@
       if (data.recording) {
         setRecordingState(data.recording, data.file);
       }
+      updateSnapshotAvailability();
       return;
     }
   }
@@ -458,6 +755,8 @@
       }
       alerts.textContent = '';
       flushQueue();
+      updateSnapshotAvailability();
+      loadMediaGallery();
       if (!controlsLoaded) {
         loadControls();
       } else if (
@@ -482,6 +781,8 @@
       alerts.textContent = 'Reconectando con el servidor...';
       startBtn.disabled = true;
       stopBtn.disabled = true;
+      setSnapshotBusy(false);
+      updateSnapshotAvailability();
       pendingControlUpdates.forEach(function (controlId) {
         setControlBusy(controlId, false);
       });
@@ -499,6 +800,7 @@
     socket.onerror = function () {
       alerts.textContent = 'Error en la comunicación con el backend.';
       showControlsMessage('Error de comunicación con el backend.', 'danger');
+      updateSnapshotAvailability();
     };
   }
 
@@ -982,6 +1284,36 @@
     }
   }
 
+  if (photoGallery) {
+    photoGallery.addEventListener('click', handleGalleryClick);
+  }
+
+  if (videoGallery) {
+    videoGallery.addEventListener('click', handleGalleryClick);
+  }
+
+  if (refreshGalleryBtn) {
+    refreshGalleryBtn.addEventListener('click', function () {
+      loadMediaGallery();
+    });
+  }
+
+  if (snapshotBtn) {
+    snapshotBtn.addEventListener('click', function () {
+      if (snapshotBusy) {
+        return;
+      }
+      setSnapshotBusy(true);
+      const sent = sendCommand('snapshot');
+      if (!sent) {
+        setSnapshotBusy(false);
+        if (alerts) {
+          alerts.textContent = 'No hay conexión con el backend.';
+        }
+      }
+    });
+  }
+
   startBtn.addEventListener('click', function () {
     const sent = sendCommand('start', { roi: getCurrentRoi() });
     if (!sent) {
@@ -1013,4 +1345,5 @@
 
   connect();
   loadControls();
+  loadMediaGallery();
 })();

@@ -26,6 +26,7 @@ pip install -r "$PROJECT_DIR/requirements.txt"
 deactivate
 
 install -d -m 775 "$PROJECT_DIR/recordings"
+install -d -m 775 "$PROJECT_DIR/recordings/photos"
 chown -R "$OWNER":"$OWNER" "$PROJECT_DIR/recordings"
 
 echo "Instalación completada. Recuerde configurar el servicio systemd." 

@@ -9,4 +9,5 @@ if [[ ! -d "$TARGET_DIR" ]]; then
   exit 0
 fi
 
-find "$TARGET_DIR" -type f -name '*.mp4' -mtime "+$MAX_DAYS" -print -delete
+find "$TARGET_DIR" -type f \( -iname '*.mp4' -o -iname '*.mov' -o -iname '*.m4v' -o -iname '*.jpg' -o -iname '*.jpeg' \) \
+  -mtime "+$MAX_DAYS" -print -delete

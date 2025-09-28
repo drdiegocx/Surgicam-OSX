@@ -40,6 +40,7 @@
               <div class="preview-frame ratio ratio-16x9" id="previewFrame">
                 <div class="preview-viewport" id="previewViewport">
                   <img id="preview" src="" alt="Vista previa en vivo" class="preview-image" />
+                  <div class="preview-watermark" aria-hidden="true">SURGICAM</div>
                 </div>
                 <div class="roi-overlay">
                   <div class="roi-mini-map" id="roiMiniMap">
@@ -117,6 +118,9 @@
                 <button id="stopBtn" class="btn btn-outline-light btn-action" disabled>
                   Detener grabación
                 </button>
+                <button id="snapshotBtn" class="btn btn-outline-primary btn-action" type="button">
+                  Capturar foto
+                </button>
                 <button
                   class="btn btn-outline-secondary btn-action"
                   type="button"
@@ -152,6 +156,47 @@
         </aside>
       </div>
     </main>
+
+    <section class="gallery-wrapper container pb-5">
+      <div class="card gallery-card border-0 shadow-sm">
+        <div class="card-body">
+          <div
+            class="d-flex flex-column flex-md-row align-items-md-center justify-content-md-between gap-3 mb-3"
+          >
+            <div>
+              <h2 class="card-title h5 mb-1">Galería de medios</h2>
+              <p class="text-muted small mb-0">
+                Consulta y gestiona las fotografías y grabaciones generadas desde el panel.
+              </p>
+            </div>
+            <button
+              id="refreshGalleryBtn"
+              class="btn btn-sm btn-outline-secondary"
+              type="button"
+            >
+              Actualizar
+            </button>
+          </div>
+          <div id="galleryEmpty" class="text-muted small py-2">
+            No hay fotografías ni videos almacenados.
+          </div>
+          <div class="media-section mb-4">
+            <div class="media-section-header d-flex align-items-center justify-content-between gap-2 mb-2">
+              <h3 class="media-heading h6 mb-0">Fotografías</h3>
+              <span id="photoSummary" class="media-summary text-muted small"></span>
+            </div>
+            <div id="photoGallery" class="media-grid"></div>
+          </div>
+          <div class="media-section">
+            <div class="media-section-header d-flex align-items-center justify-content-between gap-2 mb-2">
+              <h3 class="media-heading h6 mb-0">Videos</h3>
+              <span id="videoSummary" class="media-summary text-muted small"></span>
+            </div>
+            <div id="videoGallery" class="media-grid"></div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <div
       class="offcanvas offcanvas-end app-drawer text-bg-dark"
