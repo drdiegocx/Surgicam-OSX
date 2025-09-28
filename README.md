@@ -5,7 +5,7 @@ Aplicación web sencilla para controlar una cámara ArduCAM UVC (Raspberry Pi Ca
 ## Características
 
 - Vista previa en vivo en baja resolución (configurable) generada con GStreamer y distribuida por WebSocket a 30 fps.
-- Inicio y detención de grabaciones en alta resolución sin interrumpir la vista previa.
+- Inicio y detención de grabaciones en alta resolución en MP4 a 30 fps sin interrumpir la vista previa.
 - Interfaz web con WebSockets para controlar la cámara y recibir el estado en tiempo real.
 - Registro de eventos recientes directamente en la interfaz.
 
@@ -33,7 +33,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080
 
 Al iniciar la aplicación, GStreamer se ejecutará automáticamente para ofrecer la vista previa de la cámara. La interfaz web estará disponible en [http://localhost:8080](http://localhost:8080).
 
-Desde la interfaz puedes comenzar y detener grabaciones en alta resolución. Los archivos se almacenarán en la carpeta `recordings/`.
+Desde la interfaz puedes comenzar y detener grabaciones en alta resolución. Los archivos MP4 se almacenarán en la carpeta `recordings/`.
 
 ## Configuración
 
@@ -45,7 +45,7 @@ Puedes modificar los valores por defecto mediante variables de entorno antes de 
 
 Si se especifica un formato inválido, la aplicación mantendrá los valores por defecto y mostrará una advertencia en los logs.
 
-Las grabaciones se almacenan en la carpeta `recordings/` como secuencias MJPEG (`frame_000001.jpg`, ...). La vista previa se mantiene mediante un flujo MJPEG por WebSocket que publica hasta 30 fotogramas por segundo reutilizando las capturas almacenadas en `recordings/preview/`.
+Las grabaciones se almacenan en la carpeta `recordings/` como archivos `recording_<id>.mp4` codificados en H.264 a 30 fps con la resolución configurada. La vista previa se mantiene mediante un flujo MJPEG por WebSocket que publica hasta 30 fotogramas por segundo reutilizando las capturas almacenadas en `recordings/preview/`.
 
 La aplicación intentará iniciar los pipelines de GStreamer con DMA-BUF y MJPEG directos para minimizar el uso de CPU. Si el dispositivo o la resolución solicitada no son compatibles, se prueban alternativas automáticas que deshabilitan DMA-BUF o realizan la conversión a JPEG en software, registrando advertencias en los logs cuando se utiliza un plan de contingencia.
 

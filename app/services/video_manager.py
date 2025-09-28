@@ -108,21 +108,21 @@ class VideoManager:
             await self._start_preview_locked()
 
     async def start_recording(self) -> Path:
-        """Start a high-resolution recording and return the output directory."""
+        """Start a high-resolution recording and return the output file path."""
 
         async with self._lock:
             if self.recording_running:
                 raise RuntimeError("Recording already in progress")
 
             recording_id = uuid.uuid4().hex
-            output_dir = self.record_dir / f"recording_{recording_id}"
-            output_dir.mkdir(parents=True, exist_ok=True)
+            output_path = self.record_dir / f"recording_{recording_id}.mp4"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
             if self._preview_proc is not None and self._preview_proc.returncode is None:
                 await self._stop_process(self._preview_proc)
             self._preview_proc = None
 
-            commands = self._recording_commands(output_dir)
+            commands = self._recording_commands(output_path)
             attempts = len(commands)
             last_error: ProcessError | None = None
             for index, command in enumerate(commands, start=1):
@@ -132,6 +132,12 @@ class VideoManager:
                     attempts,
                     " ".join(command),
                 )
+                if output_path.exists():
+                    try:
+                        output_path.unlink()
+                    except OSError:
+                        pass
+
                 try:
                     self._recording_proc = await self._spawn_process(command)
                 except ProcessError as exc:
@@ -152,8 +158,13 @@ class VideoManager:
             else:  # no break
                 assert last_error is not None
                 await self._start_preview_locked()
+                if output_path.exists():
+                    try:
+                        output_path.unlink()
+                    except OSError:
+                        pass
                 raise last_error
-            self._recording_path = output_dir
+            self._recording_path = output_path
             self._recording_started_at = dt.datetime.utcnow()
             if self._recording_proc.pid is not None:
                 width, height = self.record_resolution
@@ -162,9 +173,9 @@ class VideoManager:
                     self._recording_proc.pid,
                     width,
                     height,
-                    output_dir,
+                    output_path,
                 )
-            return output_dir
+            return output_path
 
     async def stop_recording(self) -> Optional[Path]:
         """Stop the recording process if running and return the output directory."""
@@ -305,8 +316,7 @@ class VideoManager:
         commands.append(transcode_command)
         return commands
 
-    def _recording_commands(self, output_dir: Path) -> list[list[str]]:
-        record_location = str(output_dir / "frame_%06d.jpg")
+    def _recording_commands(self, output_path: Path) -> list[list[str]]:
         preview_location = str(self.preview_dir / "frame_%06d.jpg")
         r_width, r_height = self.record_resolution
         p_width, p_height = self.preview_resolution
@@ -316,11 +326,9 @@ class VideoManager:
             "leaky=downstream",
             "max-size-buffers=1",
             "!",
-            "jpegdec",
-            "!",
             "videoscale",
             "!",
-            f"video/x-raw,width={p_width},height={p_height}",
+            f"video/x-raw,width={p_width},height={p_height},framerate=30/1",
             "!",
             "videoconvert",
             "!",
@@ -333,27 +341,53 @@ class VideoManager:
             "post-messages=true",
         ]
 
-        def _tee_pipeline(source: list[str]) -> list[str]:
-            return [
-                *source,
-                "!",
-                "tee",
-                "name=t",
-                "t.",
-                "!",
-                *preview_branch,
-                "t.",
-                "!",
-                "queue",
-                "!",
-                "multifilesink",
-                f"location={record_location}",
-            ]
+        record_branch = [
+            "queue",
+            "!",
+            "videoscale",
+            "!",
+            f"video/x-raw,width={r_width},height={r_height},framerate=30/1",
+            "!",
+            "videoconvert",
+            "!",
+            "x264enc",
+            "speed-preset=veryfast",
+            "tune=zerolatency",
+            "key-int-max=30",
+            "bitrate=8000",
+            "!",
+            "h264parse",
+            "config-interval=-1",
+            "!",
+            "mp4mux",
+            "faststart=true",
+            "!",
+            "filesink",
+            f"location={output_path}",
+            "sync=false",
+        ]
 
-        def _mjpeg_source(*, use_dmabuf: bool, set_resolution: bool) -> list[str]:
-            command = [
+        common_tail = [
+            "!",
+            "videorate",
+            "!",
+            "video/x-raw,framerate=30/1",
+            "!",
+            "tee",
+            "name=t",
+            "t.",
+            "!",
+            *preview_branch,
+            "t.",
+            "!",
+            *record_branch,
+        ]
+
+        def _mjpeg_pipeline(*, use_dmabuf: bool, set_resolution: bool) -> list[str]:
+            command: list[str] = [
                 self.gst_bin,
                 "-q",
+                "-e",
                 "v4l2src",
                 f"device={self.device}",
             ]
@@ -362,30 +396,36 @@ class VideoManager:
             caps = "image/jpeg"
             if set_resolution:
                 caps += f",width={r_width},height={r_height}"
-            command.extend(["!", caps])
+            command.extend([
+                "!",
+                caps,
+                "!",
+                "jpegdec",
+                "!",
+                "videoconvert",
+            ])
+            command.extend(common_tail)
+            return command
+
+        def _raw_pipeline() -> list[str]:
+            command: list[str] = [
+                self.gst_bin,
+                "-q",
+                "-e",
+                "v4l2src",
+                f"device={self.device}",
+                "!",
+                "videoconvert",
+            ]
+            command.extend(common_tail)
             return command
 
         commands: list[list[str]] = []
         for use_dmabuf in (True, False):
-            commands.append(_tee_pipeline(_mjpeg_source(use_dmabuf=use_dmabuf, set_resolution=True)))
-            commands.append(_tee_pipeline(_mjpeg_source(use_dmabuf=use_dmabuf, set_resolution=False)))
+            commands.append(_mjpeg_pipeline(use_dmabuf=use_dmabuf, set_resolution=True))
+            commands.append(_mjpeg_pipeline(use_dmabuf=use_dmabuf, set_resolution=False))
 
-        transcode_source = [
-            self.gst_bin,
-            "-q",
-            "v4l2src",
-            f"device={self.device}",
-            "!",
-            "videoconvert",
-            "!",
-            "videoscale",
-            "!",
-            f"video/x-raw,width={r_width},height={r_height}",
-            "!",
-            "jpegenc",
-            "quality=90",
-        ]
-        commands.append(_tee_pipeline(transcode_source))
+        commands.append(_raw_pipeline())
 
         return commands
 
