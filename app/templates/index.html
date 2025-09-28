@@ -79,17 +79,33 @@
                   <div class="preview-watermark" aria-hidden="true">SURGICAM</div>
                 </div>
                 <div class="preview-toolbar" role="group" aria-label="Acciones principales">
-                  <button id="startBtn" class="btn btn-primary btn-action">
+                  <button
+                    id="startBtn"
+                    class="btn btn-primary btn-action"
+                    type="button"
+                    aria-label="Iniciar grabación"
+                  >
                     <i class="bi bi-record-circle" aria-hidden="true"></i>
-                    <span>Grabar</span>
+                    <span class="btn-label">Grabar</span>
                   </button>
-                  <button id="stopBtn" class="btn btn-outline-light btn-action" disabled>
+                  <button
+                    id="stopBtn"
+                    class="btn btn-outline-light btn-action"
+                    type="button"
+                    aria-label="Detener grabación"
+                    disabled
+                  >
                     <i class="bi bi-stop-circle" aria-hidden="true"></i>
-                    <span>Detener</span>
+                    <span class="btn-label">Detener</span>
                   </button>
-                  <button id="snapshotBtn" class="btn btn-outline-primary btn-action" type="button">
+                  <button
+                    id="snapshotBtn"
+                    class="btn btn-outline-primary btn-action"
+                    type="button"
+                    aria-label="Capturar fotografía"
+                  >
                     <i class="bi bi-camera" aria-hidden="true"></i>
-                    <span>Foto</span>
+                    <span class="btn-label">Foto</span>
                   </button>
                   <button
                     class="btn btn-outline-secondary btn-action"
@@ -97,9 +113,10 @@
                     data-bs-toggle="offcanvas"
                     data-bs-target="#controlsDrawer"
                     aria-controls="controlsDrawer"
+                    aria-label="Abrir controles de cámara"
                   >
                     <i class="bi bi-sliders" aria-hidden="true"></i>
-                    <span>Controles</span>
+                    <span class="btn-label">Controles</span>
                   </button>
                 </div>
                 <div class="roi-overlay">

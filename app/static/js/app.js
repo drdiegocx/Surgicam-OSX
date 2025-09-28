@@ -1427,7 +1427,7 @@
       controlsTabNav.appendChild(navItem);
 
       const tabPane = document.createElement('div');
-      tabPane.className = `tab-pane fade${index === 0 ? ' show active' : ''} p-3`;
+      tabPane.className = `tab-pane fade controls-pane${index === 0 ? ' show active' : ''}`;
       tabPane.id = tabId;
       tabPane.role = 'tabpanel';
 
