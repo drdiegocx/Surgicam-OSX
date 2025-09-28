@@ -67,6 +67,7 @@ class VideoManager:
         self._recording_path: Optional[Path] = None
         self._recording_started_at: Optional[dt.datetime] = None
 
+        self._record_interval = 1.0 / self.record_fps if self.record_fps > 0 else 0.0
         self._preview_interval = 1.0 / self.preview_fps if self.preview_fps > 0 else 0.0
         self._last_preview_timestamp = 0.0
 
@@ -234,6 +235,7 @@ class VideoManager:
             self._ready_event.set()
 
             jpeg_params = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
+            last_capture = time.monotonic()
 
             while not self._stop_event.is_set():
                 ok, frame = capture.read()
@@ -242,10 +244,21 @@ class VideoManager:
                     time.sleep(0.05)
                     continue
 
+                now = time.monotonic()
+                if self._record_interval > 0:
+                    elapsed = now - last_capture
+                    if elapsed < self._record_interval:
+                        time.sleep(self._record_interval - elapsed)
+                        now = time.monotonic()
+                last_capture = now
+
                 with self._record_lock:
                     writer = self._record_writer
                 if writer is not None:
                     writer.write(frame)
+
+                if not self._preview_consumers:
+                    continue
 
                 now = time.monotonic()
                 if self._preview_interval == 0 or now - self._last_preview_timestamp >= self._preview_interval:
