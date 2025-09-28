@@ -87,6 +87,17 @@ class VideoManager:
         entries.sort(key=lambda item: item[0], reverse=True)
         return entries[0][1]
 
+    async def read_preview_frame(self, frame_path: Path) -> Optional[bytes]:
+        """Read a preview frame asynchronously, returning its bytes."""
+
+        try:
+            return await asyncio.to_thread(frame_path.read_bytes)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:  # pragma: no cover - depends on filesystem timing
+            logger.debug("No se pudo leer el frame %s: %s", frame_path, exc)
+            return None
+
     async def ensure_preview(self) -> None:
         """Start the preview snapshots pipeline if required."""
 

@@ -51,6 +51,8 @@ video_manager = VideoManager(
     record_resolution=record_resolution,
 )
 
+PREVIEW_FPS = 30
+
 
 class ClientRegistry:
     """Tracks connected WebSocket clients for status broadcasts."""
@@ -90,31 +92,14 @@ class ClientRegistry:
 clients = ClientRegistry()
 
 
-def _preview_url_for(websocket: WebSocket) -> str:
-    preview_url = video_manager.preview_url
-    if preview_url.startswith(("http://", "https://")):
-        return preview_url
-
-    host = websocket.url.hostname or "localhost"
-    port = websocket.url.port
-    scheme = "https" if websocket.url.scheme == "wss" else "http"
-    path = preview_url if preview_url.startswith("/") else f"/{preview_url}"
-    if port is None:
-        return f"{scheme}://{host}{path}"
-    return f"{scheme}://{host}:{port}{path}"
-
-
-def _current_status(websocket: WebSocket | None = None) -> dict[str, Any]:
-    preview_url = video_manager.preview_url
-    if websocket is not None:
-        preview_url = _preview_url_for(websocket)
+def _current_status(_websocket: WebSocket | None = None) -> dict[str, Any]:
     status: dict[str, Any] = {
         "type": "status",
-        "preview_url": preview_url,
         "preview_active": video_manager.preview_running,
         "recording": video_manager.recording_running,
         "recording_path": str(video_manager.recording_path) if video_manager.recording_path else None,
         "recording_started_at": video_manager.recording_started_at.isoformat() if video_manager.recording_started_at else None,
+        "preview_stream": "websocket",
     }
     return status
 
@@ -180,6 +165,53 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         pass
     finally:
         await clients.disconnect(websocket)
+
+
+@app.websocket("/preview-stream")
+async def preview_stream(websocket: WebSocket) -> None:
+    await websocket.accept()
+    try:
+        await video_manager.ensure_preview()
+    except ProcessError as exc:
+        await websocket.close(code=1011, reason=str(exc))
+        return
+
+    frame_interval = 1.0 / PREVIEW_FPS
+    last_frame_path: Path | None = None
+    last_mtime: float = 0.0
+    last_payload: bytes | None = None
+
+    try:
+        while True:
+            frame_path = video_manager.latest_preview_frame()
+            if frame_path is not None:
+                try:
+                    mtime = frame_path.stat().st_mtime
+                except (FileNotFoundError, OSError):
+                    mtime = 0.0
+                if (
+                    last_payload is None
+                    or frame_path != last_frame_path
+                    or mtime > last_mtime
+                ):
+                    frame_bytes = await video_manager.read_preview_frame(frame_path)
+                    if frame_bytes:
+                        last_payload = frame_bytes
+                        last_frame_path = frame_path
+                        last_mtime = mtime
+
+            if last_payload is not None:
+                await websocket.send_bytes(last_payload)
+
+            await asyncio.sleep(frame_interval)
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("Error en la transmisión de vista previa: %s", exc)
+        try:
+            await websocket.close(code=1011, reason="preview stream error")
+        except RuntimeError:
+            pass
 
 
 async def _handle_start_recording(websocket: WebSocket) -> None:

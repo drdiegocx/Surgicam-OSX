@@ -5,20 +5,99 @@ const stopButton = document.getElementById("stop-recording");
 const eventsList = document.getElementById("events");
 const recordingInfo = document.getElementById("recording-info");
 
-let previewUrl = null;
-const PREVIEW_REFRESH_MS = 1000;
+const CONTROL_PROTOCOL = window.location.protocol === "https:" ? "wss" : "ws";
+const ws = new WebSocket(`${CONTROL_PROTOCOL}://${window.location.host}/ws`);
 
-const refreshPreviewImage = () => {
-  if (!previewUrl) {
+let latestStatus = null;
+let controlConnected = false;
+let previewConnected = false;
+let currentFrameUrl = null;
+let previewSocket = null;
+let reconnectTimer = null;
+
+const PREVIEW_RETRY_MS = 2000;
+
+const updateConnectionStatus = (status = latestStatus) => {
+  if (!controlConnected) {
+    statusMessage.textContent = "Control desconectado";
     return;
   }
-  previewImage.src = `${previewUrl}?t=${Date.now()}`;
+  if (!previewConnected) {
+    statusMessage.textContent = "Conectando vista previa...";
+    return;
+  }
+  const previewActive = status && typeof status.preview_active === "boolean"
+    ? status.preview_active
+    : true;
+  statusMessage.textContent = previewActive
+    ? "Vista previa activa"
+    : "Vista previa detenida";
 };
 
-setInterval(refreshPreviewImage, PREVIEW_REFRESH_MS);
+const handlePreviewFrame = async (data) => {
+  let blob;
+  if (data instanceof Blob) {
+    blob = data;
+  } else if (data instanceof ArrayBuffer) {
+    blob = new Blob([data], { type: "image/jpeg" });
+  } else {
+    console.warn("Tipo de datos de vista previa no soportado", data);
+    return;
+  }
 
-const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-const ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
+  if (currentFrameUrl) {
+    URL.revokeObjectURL(currentFrameUrl);
+  }
+  currentFrameUrl = URL.createObjectURL(blob);
+  previewImage.src = currentFrameUrl;
+};
+
+const connectPreviewSocket = () => {
+  if (
+    previewSocket &&
+    (previewSocket.readyState === WebSocket.OPEN || previewSocket.readyState === WebSocket.CONNECTING)
+  ) {
+    return;
+  }
+
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  previewSocket = new WebSocket(`${protocol}://${window.location.host}/preview-stream`);
+  previewSocket.binaryType = "arraybuffer";
+
+  previewSocket.addEventListener("open", () => {
+    previewConnected = true;
+    updateConnectionStatus();
+  });
+
+  previewSocket.addEventListener("message", async (event) => {
+    if (typeof event.data === "string") {
+      console.warn("Mensaje de texto inesperado en vista previa", event.data);
+      return;
+    }
+    await handlePreviewFrame(event.data);
+  });
+
+  const scheduleReconnect = () => {
+    previewConnected = false;
+    updateConnectionStatus();
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+    }
+    previewSocket = null;
+    reconnectTimer = setTimeout(connectPreviewSocket, PREVIEW_RETRY_MS);
+  };
+
+  previewSocket.addEventListener("close", scheduleReconnect);
+  previewSocket.addEventListener("error", () => {
+    const socket = previewSocket;
+    scheduleReconnect();
+    if (socket && socket.readyState !== WebSocket.CLOSED) {
+      socket.close();
+    }
+  });
+};
+
+connectPreviewSocket();
 
 const formatTimestamp = (isoString) => {
   if (!isoString) {
@@ -52,22 +131,15 @@ const updateRecordingInfo = (status) => {
 };
 
 const updateStatus = (status) => {
-  if (status.preview_url) {
-    previewUrl = status.preview_url;
-    refreshPreviewImage();
-  } else {
-    previewUrl = null;
-    previewImage.removeAttribute("src");
-  }
-  statusMessage.textContent = status.preview_active
-    ? "Vista previa activa"
-    : "Vista previa detenida";
+  latestStatus = status;
   updateButtons(status.recording);
   updateRecordingInfo(status);
+  updateConnectionStatus(status);
 };
 
 ws.addEventListener("open", () => {
-  statusMessage.textContent = "Conectado";
+  controlConnected = true;
+  updateConnectionStatus();
 });
 
 ws.addEventListener("message", (event) => {
@@ -95,8 +167,9 @@ ws.addEventListener("message", (event) => {
 });
 
 ws.addEventListener("close", () => {
-  statusMessage.textContent = "Desconectado";
+  controlConnected = false;
   updateButtons(false);
+  updateConnectionStatus();
 });
 
 startButton.addEventListener("click", () => {
