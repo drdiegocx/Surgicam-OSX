@@ -5,9 +5,10 @@ import datetime as dt
 import logging
 import os
 import signal
+import threading
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 
 class ProcessError(RuntimeError):
@@ -64,9 +65,11 @@ class VideoManager:
 
         self._preview_proc: Optional[asyncio.subprocess.Process] = None
         self._recording_proc: Optional[asyncio.subprocess.Process] = None
+        self._record_writer: Optional[Any] = None
         self._recording_path: Optional[Path] = None
         self._recording_started_at: Optional[dt.datetime] = None
         self._lock = asyncio.Lock()
+        self._record_lock = threading.Lock()
         self._drain_tasks: set[asyncio.Task[None]] = set()
 
     @property
@@ -82,7 +85,10 @@ class VideoManager:
 
     @property
     def recording_running(self) -> bool:
-        return self._recording_proc is not None and self._recording_proc.returncode is None
+        proc_running = self._recording_proc is not None and self._recording_proc.returncode is None
+        with self._record_lock:
+            writer_active = self._record_writer is not None
+        return proc_running or writer_active
 
     @property
     def recording_path(self) -> Optional[Path]:
@@ -180,9 +186,11 @@ class VideoManager:
             if not self.recording_running:
                 return None
 
-            assert self._recording_proc is not None
-            self._recording_proc.send_signal(signal.SIGINT)
-            await self._recording_proc.wait()
+            if self._recording_proc is not None and self._recording_proc.returncode is None:
+                self._recording_proc.send_signal(signal.SIGINT)
+                await self._recording_proc.wait()
+
+            self._release_record_writer_locked()
 
             output = self._recording_path
             self._recording_proc = None
@@ -201,10 +209,11 @@ class VideoManager:
                 self._preview_proc = None
 
             if self.recording_running:
-                assert self._recording_proc is not None
-                self._recording_proc.terminate()
-                await self._recording_proc.wait()
+                if self._recording_proc is not None and self._recording_proc.returncode is None:
+                    self._recording_proc.terminate()
+                    await self._recording_proc.wait()
                 self._recording_proc = None
+                self._release_record_writer_locked()
             self._recording_path = None
             self._recording_started_at = None
 
@@ -259,3 +268,35 @@ class VideoManager:
         def _cleanup(t: asyncio.Task[None]) -> None:
             self._drain_tasks.discard(t)
         task.add_done_callback(_cleanup)
+
+    def set_record_writer(self, writer: Any | None) -> None:
+        """Install a thread-safe video writer used by :meth:`record_frame`.
+
+        Parameters
+        ----------
+        writer:
+            Object implementing ``write`` and ``release`` (e.g. ``cv2.VideoWriter``),
+            or ``None`` to clear the current writer.
+        """
+
+        with self._record_lock:
+            self._record_writer = writer
+
+    def record_frame(self, frame: Any) -> None:
+        """Write a single frame to the active recording writer if available."""
+
+        with self._record_lock:
+            writer = self._record_writer
+            if writer is None:
+                return
+            writer.write(frame)
+
+    def _release_record_writer_locked(self) -> None:
+        """Release the active writer while holding ``_record_lock``."""
+
+        with self._record_lock:
+            writer = self._record_writer
+            if writer is None:
+                return
+            self._record_writer = None
+            writer.release()
