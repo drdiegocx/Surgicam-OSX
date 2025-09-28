@@ -118,6 +118,7 @@ Ajusta la ruta al repositorio según tu despliegue.
 - Cada control muestra su valor actual, mínimo, máximo y predeterminado, con `slider`, listas desplegables o interruptores según el tipo.
 - El botón **Restablecer** aplica el valor por defecto reportado por el driver sin interrumpir la vista previa ni la grabación en curso.
 - Todos los cambios se envían mediante la API `/api/controls` y se validan en el backend para evitar valores fuera de rango.
+- La API acepta el parámetro `?refresh=1` para forzar una lectura completa de `v4l2-ctl`; por defecto reutiliza un caché de 1 segundo controlado por `MINIDVR_CONTROLS_CACHE_TTL`.
 
 ## Operación y métricas
 

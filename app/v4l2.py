@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional
 
 _CONTROL_LINE_PATTERN = re.compile(
@@ -157,6 +157,16 @@ def _coerce_value(raw: Optional[str], ctrl_type: str) -> Any:
     return raw
 
 
+def _parse_get_control(raw: str) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    for line in raw.splitlines():
+        if ":" not in line:
+            continue
+        name, value = line.split(":", 1)
+        values[name.strip()] = value.strip()
+    return values
+
+
 def _build_from_json(
     data: Dict[str, Dict[str, Any]], menus: Dict[str, List[ControlOption]]
 ) -> List[ControlInfo]:
@@ -255,19 +265,32 @@ def find_control(identifier: str) -> ControlInfo:
     raise V4L2Error(f"El control '{identifier}' no está disponible en el dispositivo")
 
 
-def set_control(identifier: str, value: Any) -> ControlInfo:
+def _read_control_value(identifier: str, ctrl_type: str) -> Any:
+    output = _run_v4l2ctl([f"--get-ctrl={identifier}"])
+    values = _parse_get_control(output)
+    if identifier not in values:
+        raise V4L2Error(
+            f"No se pudo leer el valor actualizado del control '{identifier}'"
+        )
+    return _coerce_value(values[identifier], ctrl_type)
+
+
+def set_control(identifier: str, value: Any, template: Optional[ControlInfo] = None) -> ControlInfo:
     if isinstance(value, bool):
         value = int(value)
     value_str = str(value)
     _run_v4l2ctl([f"--set-ctrl={identifier}={value_str}"])
-    return find_control(identifier)
+    if template is None:
+        return find_control(identifier)
+    updated_value = _read_control_value(identifier, template.type)
+    return replace(template, value=updated_value)
 
 
-def reset_control(identifier: str) -> ControlInfo:
-    control = find_control(identifier)
+def reset_control(identifier: str, template: Optional[ControlInfo] = None) -> ControlInfo:
+    control = template or find_control(identifier)
     if control.default is None:
         raise V4L2Error(
             f"El control '{identifier}' no tiene valor predeterminado conocido"
         )
-    return set_control(identifier, control.default)
+    return set_control(identifier, control.default, control)
 

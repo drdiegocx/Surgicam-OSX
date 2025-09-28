@@ -29,5 +29,9 @@ class Settings:
 
     LOG_LEVEL: str = os.getenv("MINIDVR_LOG_LEVEL", "INFO")
 
+    CONTROLS_CACHE_TTL: float = float(
+        os.getenv("MINIDVR_CONTROLS_CACHE_TTL", "1.0")
+    )
+
 
 settings = Settings()

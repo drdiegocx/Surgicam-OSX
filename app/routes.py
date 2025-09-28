@@ -5,6 +5,8 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
+from threading import Lock
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -24,7 +26,7 @@ else:  # pragma: no cover - entornos con Pydantic v2
 
 from .config import settings
 from .manager import RecorderManager
-from .v4l2 import V4L2Error, list_controls, reset_control, set_control
+from .v4l2 import ControlInfo, V4L2Error, list_controls, reset_control, set_control
 
 logger = logging.getLogger("mini_dvr")
 
@@ -32,6 +34,46 @@ router = APIRouter()
 manager = RecorderManager()
 
 templates = Jinja2Templates(directory=str(settings.BASE_DIR / "app" / "templates"))
+
+
+_controls_cache: List[ControlInfo] = []
+_controls_cache_timestamp: float = 0.0
+_controls_cache_lock = Lock()
+
+
+def _controls_snapshot(force: bool = False) -> List[ControlInfo]:
+    """Obtiene la lista de controles reutilizando un caché de corta duración."""
+
+    global _controls_cache_timestamp
+
+    now = time.monotonic()
+    with _controls_cache_lock:
+        if (
+            not force
+            and _controls_cache
+            and now - _controls_cache_timestamp <= settings.CONTROLS_CACHE_TTL
+        ):
+            return list(_controls_cache)
+
+    controls = list_controls()
+    with _controls_cache_lock:
+        _controls_cache.clear()
+        _controls_cache.extend(controls)
+        _controls_cache_timestamp = time.monotonic()
+        return list(_controls_cache)
+
+
+def _update_controls_cache(control: ControlInfo) -> None:
+    with _controls_cache_lock:
+        for index, existing in enumerate(_controls_cache):
+            if existing.identifier == control.identifier:
+                _controls_cache[index] = control
+                break
+        else:
+            _controls_cache.append(control)
+        # refresca el timestamp para que el caché continúe vigente
+        global _controls_cache_timestamp
+        _controls_cache_timestamp = time.monotonic()
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -136,9 +178,9 @@ def _validate_range(control: Dict[str, Any], value: Any) -> None:
 
 
 @router.get("/api/controls", response_class=JSONResponse)
-async def get_controls() -> JSONResponse:
+async def get_controls(refresh: bool = False) -> JSONResponse:
     try:
-        controls = await asyncio.to_thread(list_controls)
+        controls = await asyncio.to_thread(_controls_snapshot, refresh)
     except V4L2Error as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     payload: List[Dict[str, Any]] = [control.as_dict() for control in controls]
@@ -148,7 +190,7 @@ async def get_controls() -> JSONResponse:
 @router.post("/api/controls/{identifier}", response_class=JSONResponse)
 async def update_control(identifier: str, update: ControlUpdate) -> JSONResponse:
     try:
-        controls = await asyncio.to_thread(list_controls)
+        controls = await asyncio.to_thread(_controls_snapshot)
     except V4L2Error as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     control_map = {item.identifier: item for item in controls}
@@ -158,16 +200,17 @@ async def update_control(identifier: str, update: ControlUpdate) -> JSONResponse
 
     try:
         if update.action == "default":
-            updated = await asyncio.to_thread(reset_control, identifier)
+            updated = await asyncio.to_thread(reset_control, identifier, target)
         else:
             normalized = _normalize_value(target.as_dict(), update.value)
             _validate_range(target.as_dict(), normalized)
-            updated = await asyncio.to_thread(set_control, identifier, normalized)
+            updated = await asyncio.to_thread(set_control, identifier, normalized, target)
     except V4L2Error as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    _update_controls_cache(updated)
     return JSONResponse(status_code=200, content={"control": updated.as_dict()})
 
 

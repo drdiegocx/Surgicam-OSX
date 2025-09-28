@@ -570,7 +570,8 @@
     setControlsLoading(true);
     showControlsContent(false);
     try {
-      const response = await fetch('/api/controls');
+      const url = force ? '/api/controls?refresh=1' : '/api/controls';
+      const response = await fetch(url);
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
         const message = error.detail || 'No se pudo obtener la configuración de cámara.';
