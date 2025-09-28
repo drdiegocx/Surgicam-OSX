@@ -10,7 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Placeholder section for upcoming fixes and features.
 
-## [0.1.0] - 2025-09-28
+## [0.1.1] - 2025-09-28 20:16 UTC (rev 0.1.1)
+
+### Changed
+- Documented the outstanding UI tasks in `TODO.md` as an actionable checklist.
+- Added revision metadata to this changelog to reflect the documented release history.
+
+## [0.1.0] - 2025-09-28 19:52 UTC (rev f865698)
 
 ### Added
 - End-to-end Mini-DVR stack with FastAPI backend, MJPEG preview via uStreamer, and segmented MP4 recording through FFmpeg.
