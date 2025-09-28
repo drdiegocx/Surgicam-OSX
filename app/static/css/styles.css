@@ -1,0 +1,28 @@
+body {
+  background: #101820;
+  color: #f8f9fa;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+.fw-semibold {
+  color: #f8f9fa;
+}
+
+.card {
+  background-color: rgba(18, 18, 18, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#alerts {
+  min-height: 1.5rem;
+}
+
+img#preview {
+  background: #000;
+}
+
+.badge.bg-secondary {
+  background-color: #6c757d !important;
+}

@@ -1,0 +1,19 @@
+[Unit]
+Description=Mini-DVR Web para Raspberry Pi
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/mini-dvr
+Environment=PATH=/opt/mini-dvr/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+Environment=MINIDVR_RECORDINGS_DIR=/home/pi/recordings
+Environment=MINIDVR_STREAM_URL=http://127.0.0.1:8000/stream
+ExecStart=/opt/mini-dvr/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8080 --log-level info
+Restart=always
+User=pi
+Group=pi
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
