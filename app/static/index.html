@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Surgicam Streaming</title>
+    <style>
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background: #0b1c2c;
+            color: #f4f6f8;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        header {
+            width: 100%;
+            padding: 1.5rem;
+            text-align: center;
+            background: #122b42;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+        }
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 1.5rem;
+            width: 100%;
+            max-width: 960px;
+            padding: 2rem 1rem 3rem;
+        }
+        #preview {
+            width: 100%;
+            max-width: 720px;
+            background: #081420;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        #preview img {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+        .controls {
+            display: flex;
+            gap: 1rem;
+        }
+        button {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            border: none;
+            font-size: 1rem;
+            cursor: pointer;
+            background: #1f8adc;
+            color: white;
+            transition: background 0.2s ease, transform 0.2s ease;
+        }
+        button:disabled {
+            background: rgba(255, 255, 255, 0.2);
+            cursor: not-allowed;
+        }
+        button:not(:disabled):hover {
+            background: #46a5f3;
+            transform: translateY(-1px);
+        }
+        #status {
+            font-size: 0.95rem;
+            color: #e6edf6;
+            min-height: 1.5rem;
+        }
+        footer {
+            padding: 1rem;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Surgicam: Vista previa y grabación</h1>
+    </header>
+    <main>
+        <section id="preview">
+            <img id="stream" alt="Vista previa" src="" />
+        </section>
+        <div id="status">Conectando…</div>
+        <div class="controls">
+            <button id="startBtn">Comenzar grabación</button>
+            <button id="stopBtn" disabled>Detener grabación</button>
+        </div>
+    </main>
+    <footer>
+        Cámara Raspberry Pi - Módulo 3 (ArduCAM UVC)
+    </footer>
+    <script>
+        const ws = new WebSocket(`ws://${window.location.host}/ws/preview`);
+        const img = document.getElementById('stream');
+        const status = document.getElementById('status');
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+
+        let lastObjectUrl = null;
+
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = () => {
+            status.textContent = 'Vista previa conectada';
+        };
+        ws.onclose = () => {
+            status.textContent = 'Conexión cerrada';
+        };
+        ws.onerror = (event) => {
+            console.error('WebSocket error', event);
+            status.textContent = 'Error en la conexión de vista previa';
+        };
+        ws.onmessage = (event) => {
+            if (lastObjectUrl) {
+                URL.revokeObjectURL(lastObjectUrl);
+            }
+            const blob = new Blob([event.data], { type: 'image/jpeg' });
+            lastObjectUrl = URL.createObjectURL(blob);
+            img.src = lastObjectUrl;
+        };
+
+        async function callApi(path) {
+            const response = await fetch(path, { method: 'POST' });
+            if (!response.ok) {
+                const { detail } = await response.json();
+                throw new Error(detail || 'Error inesperado');
+            }
+            return response.json();
+        }
+
+        startBtn.addEventListener('click', async () => {
+            startBtn.disabled = true;
+            status.textContent = 'Iniciando grabación…';
+            try {
+                const data = await callApi('/recordings/start');
+                status.textContent = `Grabando en ${data.file}`;
+                stopBtn.disabled = false;
+            } catch (error) {
+                status.textContent = error.message;
+                startBtn.disabled = false;
+            }
+        });
+
+        stopBtn.addEventListener('click', async () => {
+            stopBtn.disabled = true;
+            status.textContent = 'Deteniendo grabación…';
+            try {
+                const data = await callApi('/recordings/stop');
+                status.textContent = `Grabación guardada en ${data.file}`;
+            } catch (error) {
+                status.textContent = error.message;
+            } finally {
+                startBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
