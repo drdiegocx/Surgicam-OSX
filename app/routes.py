@@ -177,25 +177,23 @@ def _serve_video_file(path: Path, request: Request) -> Response:
         if start >= file_size or end < start:
             raise HTTPException(status_code=416, detail="Rango fuera de los límites del recurso.")
         end = min(end, file_size - 1)
-        chunk_generator = _iter_file_chunks(path, start, end)
-        headers = {
-            "Content-Range": f"bytes {start}-{end}/{file_size}",
-            "Accept-Ranges": "bytes",
-            "Content-Length": str(end - start + 1),
-            "Content-Disposition": f"inline; filename={path.name}",
-        }
-        return StreamingResponse(
-            chunk_generator,
-            status_code=206,
-            media_type="video/mp4",
-            headers=headers,
-        )
+    else:
+        start = 0
+        end = file_size - 1
 
+    chunk_generator = _iter_file_chunks(path, start, end)
     headers = {
+        "Content-Range": f"bytes {start}-{end}/{file_size}",
         "Accept-Ranges": "bytes",
+        "Content-Length": str(end - start + 1),
         "Content-Disposition": f"inline; filename={path.name}",
     }
-    return FileResponse(path, filename=path.name, media_type="video/mp4", headers=headers)
+    return StreamingResponse(
+        chunk_generator,
+        status_code=206,
+        media_type="video/mp4",
+        headers=headers,
+    )
 
 
 @router.get("/media/{category}/{name}")
