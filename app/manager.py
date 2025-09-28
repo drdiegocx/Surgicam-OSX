@@ -132,7 +132,7 @@ class RecorderManager:
             "ustreamer",
             f"--device={settings.USTREAMER_DEVICE}",
             "--format=MJPEG",
-            "--encoder=HW",
+            "--encoder=CPU",
             f"--resolution={settings.USTREAMER_RESOLUTION}",
             f"--desired-fps={settings.USTREAMER_FPS}",
             "--allow-origin=*",
@@ -141,6 +141,13 @@ class RecorderManager:
             "--port",
             str(settings.USTREAMER_PORT),
             "--persistent",
+            "--tcp-nodelay",
+            "--image-default",
+            "--buffers=4",
+            "--workers=4",
+            "--verbose",
+            "--io-method=MMAP",
+            "--min-frame-size=64",
         ]
         logger.info("Iniciando uStreamer con comando: %s", " ".join(command))
         try:
