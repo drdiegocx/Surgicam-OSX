@@ -111,14 +111,37 @@ class VideoManager:
                 await self._stop_process(self._preview_proc)
             self._preview_proc = None
 
-            command = self._recording_command(output_dir)
-            logger.debug("Launching recording command: %s", " ".join(command))
-            try:
-                self._recording_proc = await self._spawn_process(command)
-            except Exception:
-                # Restore preview pipeline if the recording pipeline fails to start.
+            commands = self._recording_commands(output_dir)
+            attempts = len(commands)
+            last_error: ProcessError | None = None
+            for index, command in enumerate(commands, start=1):
+                logger.debug(
+                    "Launching recording command (%s/%s): %s",
+                    index,
+                    attempts,
+                    " ".join(command),
+                )
+                try:
+                    self._recording_proc = await self._spawn_process(command)
+                except ProcessError as exc:
+                    last_error = exc
+                    logger.warning(
+                        "No se pudo iniciar la grabación con el pipeline #%s/%s: %s",
+                        index,
+                        attempts,
+                        exc,
+                    )
+                    continue
+                if index > 1:
+                    logger.warning(
+                        "Grabación iniciada usando pipeline alternativo #%s",
+                        index,
+                    )
+                break
+            else:  # no break
+                assert last_error is not None
                 await self._start_preview_locked()
-                raise
+                raise last_error
             self._recording_path = output_dir
             self._recording_started_at = dt.datetime.utcnow()
             if self._recording_proc.pid is not None:
@@ -170,10 +193,39 @@ class VideoManager:
             self._drain_tasks.clear()
 
     async def _start_preview_locked(self) -> None:
-        command = self._preview_command()
-        logger.debug("Launching preview command: %s", " ".join(command))
-        self._preview_proc = await self._spawn_process(command)
-        if self._preview_proc.pid is not None:
+        commands = self._preview_commands()
+        attempts = len(commands)
+        last_error: ProcessError | None = None
+        for index, command in enumerate(commands, start=1):
+            logger.debug(
+                "Launching preview command (%s/%s): %s",
+                index,
+                attempts,
+                " ".join(command),
+            )
+            try:
+                self._preview_proc = await self._spawn_process(command)
+            except ProcessError as exc:
+                last_error = exc
+                logger.warning(
+                    "No se pudo iniciar la vista previa con el pipeline #%s/%s: %s",
+                    index,
+                    attempts,
+                    exc,
+                )
+                continue
+
+            if index > 1:
+                logger.warning(
+                    "Vista previa iniciada usando pipeline alternativo #%s",
+                    index,
+                )
+            break
+        else:  # no break
+            assert last_error is not None
+            raise last_error
+
+        if self._preview_proc and self._preview_proc.pid is not None:
             width, height = self.preview_resolution
             logger.info(
                 "Vista previa iniciada (pid=%s) a %sx%s",
@@ -182,18 +234,11 @@ class VideoManager:
                 height,
             )
 
-    def _preview_command(self) -> list[str]:
+    def _preview_commands(self) -> list[list[str]]:
         width, height = self.preview_resolution
         location = str(self.preview_dir / "frame_%06d.jpg")
-        return [
-            self.gst_bin,
-            "-q",
-            "v4l2src",
-            f"device={self.device}",
-            "io-mode=dmabuf",
-            "!",
-            f"image/jpeg,width={width},height={height}",
-            "!",
+
+        base_tail = [
             "queue",
             "leaky=downstream",
             "max-size-buffers=1",
@@ -204,24 +249,58 @@ class VideoManager:
             "post-messages=true",
         ]
 
-    def _recording_command(self, output_dir: Path) -> list[str]:
-        record_location = str(output_dir / "frame_%06d.jpg")
-        preview_location = str(self.preview_dir / "frame_%06d.jpg")
-        r_width, r_height = self.record_resolution
-        p_width, p_height = self.preview_resolution
-        return [
+        commands: list[list[str]] = []
+
+        def _mjpeg_command(*, use_dmabuf: bool, set_resolution: bool) -> list[str]:
+            command = [
+                self.gst_bin,
+                "-q",
+                "v4l2src",
+                f"device={self.device}",
+            ]
+            if use_dmabuf:
+                command.append("io-mode=dmabuf")
+            command.extend([
+                "!",
+                "image/jpeg"
+                + (f",width={width},height={height}" if set_resolution else ""),
+                "!",
+                *base_tail,
+            ])
+            return command
+
+        commands.append(_mjpeg_command(use_dmabuf=True, set_resolution=True))
+        commands.append(_mjpeg_command(use_dmabuf=True, set_resolution=False))
+        commands.append(_mjpeg_command(use_dmabuf=False, set_resolution=True))
+        commands.append(_mjpeg_command(use_dmabuf=False, set_resolution=False))
+
+        transcode_command = [
             self.gst_bin,
             "-q",
             "v4l2src",
             f"device={self.device}",
-            "io-mode=dmabuf",
             "!",
-            f"image/jpeg,width={r_width},height={r_height}",
+            "videoconvert",
             "!",
-            "tee",
-            "name=t",
-            "t.",
+            "videoscale",
             "!",
+            f"video/x-raw,width={width},height={height}",
+            "!",
+            "jpegenc",
+            "quality=85",
+            "!",
+            *base_tail,
+        ]
+        commands.append(transcode_command)
+        return commands
+
+    def _recording_commands(self, output_dir: Path) -> list[list[str]]:
+        record_location = str(output_dir / "frame_%06d.jpg")
+        preview_location = str(self.preview_dir / "frame_%06d.jpg")
+        r_width, r_height = self.record_resolution
+        p_width, p_height = self.preview_resolution
+
+        preview_branch = [
             "queue",
             "leaky=downstream",
             "max-size-buffers=1",
@@ -241,13 +320,63 @@ class VideoManager:
             f"location={preview_location}",
             "max-files=5",
             "post-messages=true",
-            "t.",
-            "!",
-            "queue",
-            "!",
-            "multifilesink",
-            f"location={record_location}",
         ]
+
+        def _tee_pipeline(source: list[str]) -> list[str]:
+            return [
+                *source,
+                "!",
+                "tee",
+                "name=t",
+                "t.",
+                "!",
+                *preview_branch,
+                "t.",
+                "!",
+                "queue",
+                "!",
+                "multifilesink",
+                f"location={record_location}",
+            ]
+
+        def _mjpeg_source(*, use_dmabuf: bool, set_resolution: bool) -> list[str]:
+            command = [
+                self.gst_bin,
+                "-q",
+                "v4l2src",
+                f"device={self.device}",
+            ]
+            if use_dmabuf:
+                command.append("io-mode=dmabuf")
+            caps = "image/jpeg"
+            if set_resolution:
+                caps += f",width={r_width},height={r_height}"
+            command.extend(["!", caps])
+            return command
+
+        commands: list[list[str]] = []
+        for use_dmabuf in (True, False):
+            commands.append(_tee_pipeline(_mjpeg_source(use_dmabuf=use_dmabuf, set_resolution=True)))
+            commands.append(_tee_pipeline(_mjpeg_source(use_dmabuf=use_dmabuf, set_resolution=False)))
+
+        transcode_source = [
+            self.gst_bin,
+            "-q",
+            "v4l2src",
+            f"device={self.device}",
+            "!",
+            "videoconvert",
+            "!",
+            "videoscale",
+            "!",
+            f"video/x-raw,width={r_width},height={r_height}",
+            "!",
+            "jpegenc",
+            "quality=90",
+        ]
+        commands.append(_tee_pipeline(transcode_source))
+
+        return commands
 
     async def _stop_process(self, process: asyncio.subprocess.Process) -> None:
         if process.returncode is not None:

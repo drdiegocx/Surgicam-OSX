@@ -45,9 +45,9 @@ Puedes modificar los valores por defecto mediante variables de entorno antes de 
 
 Si se especifica un formato inválido, la aplicación mantendrá los valores por defecto y mostrará una advertencia en los logs.
 
-Las grabaciones se almacenan en la carpeta `recordings/` como secuencias MJPEG (`frame_000001.jpg`, ...). La vista previa se
- actualiza periódicamente generando capturas JPEG almacenadas en `recordings/preview/`, que la interfaz web recarga de forma
- automática.
+Las grabaciones se almacenan en la carpeta `recordings/` como secuencias MJPEG (`frame_000001.jpg`, ...). La vista previa se actualiza periódicamente generando capturas JPEG almacenadas en `recordings/preview/`, que la interfaz web recarga de forma automática.
+
+La aplicación intentará iniciar los pipelines de GStreamer con DMA-BUF y MJPEG directos para minimizar el uso de CPU. Si el dispositivo o la resolución solicitada no son compatibles, se prueban alternativas automáticas que deshabilitan DMA-BUF o realizan la conversión a JPEG en software, registrando advertencias en los logs cuando se utiliza un plan de contingencia.
 
 ## Advertencia
 
