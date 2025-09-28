@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import logging
 import os
 import signal
 import uuid
@@ -13,6 +14,9 @@ from typing import Optional
 
 class ProcessError(RuntimeError):
     """Raised when a managed process fails to start."""
+
+
+logger = logging.getLogger("surgicam.video")
 
 
 class VideoManager:
@@ -65,6 +69,7 @@ class VideoManager:
         self._recording_path: Optional[Path] = None
         self._recording_started_at: Optional[dt.datetime] = None
         self._lock = asyncio.Lock()
+        self._drain_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def preview_running(self) -> bool:
@@ -193,11 +198,15 @@ class VideoManager:
             self._recording_path = None
             self._recording_started_at = None
 
+            for task in list(self._drain_tasks):
+                task.cancel()
+            self._drain_tasks.clear()
+
     async def _spawn_process(self, command: list[str]) -> asyncio.subprocess.Process:
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
-                stdout=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as exc:  # pragma: no cover - environment specific
@@ -211,4 +220,28 @@ class VideoManager:
                 f"Stderr: {stderr.decode().strip()}"
             )
 
+        self._start_drain_task(process.stderr, command[0])
         return process
+
+    def _start_drain_task(self, stream: asyncio.StreamReader | None, name: str) -> None:
+        if stream is None:
+            return
+
+        async def _drain() -> None:
+            try:
+                while True:
+                    chunk = await stream.readline()
+                    if not chunk:
+                        break
+                    logger.debug("%s: %s", name, chunk.decode(errors="ignore").rstrip())
+            except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
+                raise
+            except Exception:  # pragma: no cover - best effort logging
+                logger.exception("Error draining output for %%s", name)
+
+        task = asyncio.create_task(_drain())
+        self._drain_tasks.add(task)
+
+        def _cleanup(t: asyncio.Task[None]) -> None:
+            self._drain_tasks.discard(t)
+        task.add_done_callback(_cleanup)
