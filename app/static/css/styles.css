@@ -89,15 +89,8 @@ body {
 
 .app-layout {
   flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(260px, 26vw, 340px);
-  gap: 1.5rem;
-  align-items: stretch;
-  min-height: 0;
-}
-
-.preview-panel,
-.info-panel {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
 }
 
@@ -106,34 +99,17 @@ body {
   flex-direction: column;
   gap: 1rem;
   flex: 1 1 auto;
+  min-height: 0;
 }
 
 .preview-card {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-}
-
-.info-card,
-.preview-card,
-.status-card {
   background: var(--surface);
   border: 1px solid var(--outline);
   border-radius: 1.25rem;
   overflow: hidden;
-}
-
-.quick-actions-list {
-  margin: 0;
-  padding-left: 1.2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  color: var(--text-muted);
-}
-
-.quick-actions-list strong {
-  color: var(--text-primary);
 }
 
 .app-alert {
@@ -560,29 +536,72 @@ body {
 }
 
 .control-card {
-  background: rgba(10, 16, 28, 0.9);
-  border: 1px solid var(--outline);
-  border-radius: 1rem;
-  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.32);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  background: rgba(12, 18, 32, 0.9);
+  border: 1px solid var(--outline);
+  border-radius: 1.15rem;
+  padding: 1.1rem 1.25rem;
+  box-shadow: 0 22px 48px rgba(3, 7, 18, 0.45);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
 }
 
 .control-card:hover {
   border-color: var(--outline-strong);
-  box-shadow: 0 28px 55px rgba(8, 20, 43, 0.45);
+  box-shadow: 0 28px 55px rgba(8, 20, 43, 0.5);
 }
 
-.control-card .badge {
+.control-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.control-card-title {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.control-card-title .name {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.control-card-title .type {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   font-size: 0.7rem;
-  background: rgba(148, 163, 184, 0.18);
-  border: 1px solid var(--outline);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
-.control-card .form-range::-webkit-slider-thumb {
-  background: var(--accent);
+.control-card-header .btn {
+  white-space: nowrap;
 }
 
+.control-card-summary {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.control-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.control-card .form-range::-webkit-slider-thumb,
 .control-card .form-range::-moz-range-thumb {
   background: var(--accent);
 }
@@ -599,16 +618,40 @@ body {
   content: 'Aplicando…';
   position: absolute;
   top: 0.85rem;
-  right: 1rem;
-  font-size: 0.75rem;
+  right: 1.15rem;
+  font-size: 0.72rem;
   color: var(--accent);
   letter-spacing: 0.04em;
 }
 
-.control-card .card-body {
+.control-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 0.9rem;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.control-meta-item {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.2rem;
+}
+
+.control-meta-label {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.control-meta-value {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+  word-break: break-word;
 }
 
 .drawer-loading {
@@ -856,17 +899,10 @@ body {
 
 @media (max-width: 767.98px) {
   .app-layout {
-    grid-template-columns: 1fr;
     gap: 1.25rem;
   }
 
-  .info-panel {
-    order: -1;
-  }
-
-  .preview-card,
-  .status-card,
-  .info-card {
+  .preview-card {
     border-radius: 1rem;
   }
 
