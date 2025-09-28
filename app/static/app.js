@@ -4,6 +4,9 @@ const startButton = document.getElementById("start-recording");
 const stopButton = document.getElementById("stop-recording");
 const eventsList = document.getElementById("events");
 const recordingInfo = document.getElementById("recording-info");
+const recordingsList = document.getElementById("recordings-list");
+const recordingsEmpty = document.getElementById("recordings-empty");
+const refreshRecordingsButton = document.getElementById("refresh-recordings");
 
 const protocol = window.location.protocol === "https:" ? "wss" : "ws";
 const baseUrl = `${protocol}://${window.location.host}`;
@@ -45,6 +48,22 @@ const formatTimestamp = (isoString) => {
   return date.toLocaleString();
 };
 
+const formatBytes = (bytes) => {
+  if (!Number.isFinite(bytes)) {
+    return "";
+  }
+  if (bytes === 0) {
+    return "0 B";
+  }
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1,
+  );
+  const value = bytes / 1024 ** exponent;
+  return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+};
+
 const addEvent = (message) => {
   const item = document.createElement("li");
   item.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
@@ -75,6 +94,70 @@ const updateStatus = (status) => {
   updateRecordingInfo(status);
 };
 
+const renderRecordings = (records) => {
+  if (!recordingsList || !recordingsEmpty) {
+    return;
+  }
+  recordingsList.innerHTML = "";
+  if (!records.length) {
+    recordingsList.style.display = "none";
+    recordingsEmpty.style.display = "block";
+    return;
+  }
+
+  recordingsList.style.display = "flex";
+  recordingsEmpty.style.display = "none";
+
+  records.forEach((record) => {
+    const item = document.createElement("li");
+    item.className = "recordings-item";
+
+    const link = document.createElement("a");
+    link.href = record.url;
+    link.textContent = record.filename;
+    link.target = "_blank";
+    link.rel = "noopener";
+    item.appendChild(link);
+
+    const meta = document.createElement("span");
+    meta.className = "recordings-meta";
+    const size = formatBytes(record.size);
+    const modified = formatTimestamp(record.modified_at);
+    meta.textContent = [size, modified].filter(Boolean).join(" · ");
+    item.appendChild(meta);
+
+    recordingsList.appendChild(item);
+  });
+};
+
+const loadRecordings = async () => {
+  const label = refreshRecordingsButton?.textContent ?? "";
+  if (refreshRecordingsButton) {
+    refreshRecordingsButton.disabled = true;
+    refreshRecordingsButton.textContent = "Actualizando...";
+  }
+
+  try {
+    const response = await fetch("/recordings");
+    if (!response.ok) {
+      throw new Error(`Respuesta ${response.status}`);
+    }
+    const data = await response.json();
+    if (!Array.isArray(data)) {
+      throw new Error("Formato de respuesta inesperado");
+    }
+    renderRecordings(data);
+  } catch (error) {
+    console.error("No se pudo cargar la lista de grabaciones", error);
+    addEvent(`No se pudo cargar la lista de grabaciones: ${error.message}`);
+  } finally {
+    if (refreshRecordingsButton) {
+      refreshRecordingsButton.disabled = false;
+      refreshRecordingsButton.textContent = label;
+    }
+  }
+};
+
 controlSocket.addEventListener("open", () => {
   controlConnected = true;
   updateConnectionStatus();
@@ -92,6 +175,7 @@ controlSocket.addEventListener("message", (event) => {
     case "recording_stopped":
       if (payload.path) {
         addEvent(`Grabación guardada en ${payload.path}`);
+        loadRecordings();
       } else {
         addEvent("Grabación detenida");
       }
@@ -122,6 +206,12 @@ stopButton.addEventListener("click", () => {
   sendControlMessage({ action: "stop_recording" });
 });
 
+if (refreshRecordingsButton) {
+  refreshRecordingsButton.addEventListener("click", () => {
+    loadRecordings();
+  });
+}
+
 previewSocket.addEventListener("open", () => {
   previewConnected = true;
   updateConnectionStatus();
@@ -147,3 +237,5 @@ previewSocket.addEventListener("message", (event) => {
     URL.revokeObjectURL(url);
   };
 });
+
+loadRecordings();

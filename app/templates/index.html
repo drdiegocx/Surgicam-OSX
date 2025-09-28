@@ -20,6 +20,14 @@
         <button id="stop-recording" disabled>Detener grabación</button>
         <div class="recording-info" id="recording-info"></div>
         <ul id="events"></ul>
+        <section class="recordings">
+          <div class="recordings-header">
+            <h2>Grabaciones</h2>
+            <button id="refresh-recordings" type="button">Actualizar lista</button>
+          </div>
+          <p id="recordings-empty" class="recordings-empty">No hay grabaciones disponibles.</p>
+          <ul id="recordings-list" class="recordings-list"></ul>
+        </section>
       </section>
     </main>
     <script src="/static/app.js" type="module"></script>

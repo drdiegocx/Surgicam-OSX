@@ -8,6 +8,7 @@ Aplicación web sencilla para controlar una cámara ArduCAM UVC (Raspberry Pi Ca
 - Inicio y detención de grabaciones en alta resolución reutilizando el mismo flujo de captura sin interrumpir la vista previa.
 - Interfaz web con WebSockets para controlar la cámara y recibir el estado en tiempo real.
 - Registro de eventos recientes directamente en la interfaz.
+- Listado de grabaciones recientes con enlaces para descargar los archivos generados.
 
 ## Requisitos
 
@@ -31,7 +32,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 Al iniciar la aplicación se crea un hilo dedicado que lee continuamente desde la cámara. La interfaz web y el stream de vista previa están disponibles en [http://localhost:8000](http://localhost:8000).
 
-Desde la interfaz puedes comenzar y detener grabaciones en alta resolución. Los archivos se almacenarán en la carpeta `recordings/`.
+Desde la interfaz puedes comenzar y detener grabaciones en alta resolución. Los archivos se almacenarán en la carpeta `recordings/` y se mostrarán en la sección **Grabaciones**, desde donde puedes descargarlos.
 
 ## Configuración
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import os
 from pathlib import Path
@@ -104,6 +105,12 @@ video_manager = VideoManager(
     jpeg_quality=jpeg_quality,
 )
 
+app.mount(
+    "/recordings/files",
+    StaticFiles(directory=video_manager.record_dir),
+    name="recordings-files",
+)
+
 
 class ClientRegistry:
     """Tracks connected WebSocket clients for status broadcasts."""
@@ -181,6 +188,33 @@ async def shutdown_event() -> None:
 async def index() -> HTMLResponse:
     html_path = BASE_DIR / "templates" / "index.html"
     return HTMLResponse(html_path.read_text(encoding="utf8"))
+
+
+@app.get("/recordings")
+async def list_recordings() -> list[dict[str, Any]]:
+    def _collect() -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for path in video_manager.record_dir.glob("*"):
+            if not path.is_file():
+                continue
+            stat = path.stat()
+            entries.append(
+                {
+                    "filename": path.name,
+                    "url": f"/recordings/files/{path.name}",
+                    "size": stat.st_size,
+                    "modified_at": dt.datetime.fromtimestamp(
+                        stat.st_mtime, tz=dt.timezone.utc
+                    ).isoformat(),
+                    "_modified_ts": stat.st_mtime,
+                }
+            )
+        entries.sort(key=lambda item: item["_modified_ts"], reverse=True)
+        for item in entries:
+            item.pop("_modified_ts", None)
+        return entries
+
+    return await asyncio.to_thread(_collect)
 
 
 @app.websocket("/ws")
