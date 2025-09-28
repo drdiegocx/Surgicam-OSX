@@ -41,6 +41,7 @@ class CameraController:
         self._latest_frame: Optional[bytes] = None
         self._clients: List[asyncio.Queue[bytes]] = []
         self._recording: Optional[RecordingBranch] = None
+        self._recording_lock = threading.Lock()
 
         self._running = threading.Event()
         self._shutdown = threading.Event()
@@ -196,78 +197,96 @@ class CameraController:
             return self._latest_frame
 
     def start_recording(self, location: pathlib.Path) -> None:
-        if self._recording is not None:
-            raise RuntimeError("Recording already in progress")
+        with self._recording_lock:
+            if self._recording is not None:
+                raise RuntimeError("Recording already in progress")
 
-        queue = Gst.ElementFactory.make("queue", None)
-        jpegparse = Gst.ElementFactory.make("jpegparse", None)
-        mux = Gst.ElementFactory.make("avimux", None)
-        filesink = Gst.ElementFactory.make("filesink", None)
+            queue = Gst.ElementFactory.make("queue", None)
+            jpegparse = Gst.ElementFactory.make("jpegparse", None)
+            mux = Gst.ElementFactory.make("avimux", None)
+            filesink = Gst.ElementFactory.make("filesink", None)
 
-        if not all([queue, jpegparse, mux, filesink]):
-            raise RuntimeError("Failed to allocate recording elements")
+            if not all([queue, jpegparse, mux, filesink]):
+                raise RuntimeError("Failed to allocate recording elements")
 
-        filesink.set_property("location", str(location))
-        filesink.set_property("sync", False)
+            filesink.set_property("location", str(location))
+            filesink.set_property("sync", False)
 
-        for element in (queue, jpegparse, mux, filesink):
-            self._pipeline.add(element)
+            for element in (queue, jpegparse, mux, filesink):
+                self._pipeline.add(element)
 
-        if not queue.link(jpegparse):
-            raise RuntimeError("Failed to link queue to jpegparse")
-        if not jpegparse.link(mux):
-            raise RuntimeError("Failed to link jpegparse to mux")
-        if not mux.link(filesink):
-            raise RuntimeError("Failed to link mux to filesink")
+            if not queue.link(jpegparse):
+                raise RuntimeError("Failed to link queue to jpegparse")
+            if not jpegparse.link(mux):
+                raise RuntimeError("Failed to link jpegparse to mux")
+            if not mux.link(filesink):
+                raise RuntimeError("Failed to link mux to filesink")
 
-        tee_pad = self._tee.get_request_pad("src_%u")
-        queue_pad = queue.get_static_pad("sink")
-        if tee_pad is None or queue_pad is None:
-            raise RuntimeError("Failed to obtain recording pads")
-        if tee_pad.link(queue_pad) != Gst.PadLinkReturn.OK:
-            raise RuntimeError("Failed to link tee to recording branch")
+            tee_pad = self._tee.get_request_pad("src_%u")
+            queue_pad = queue.get_static_pad("sink")
+            if tee_pad is None or queue_pad is None:
+                raise RuntimeError("Failed to obtain recording pads")
+            if tee_pad.link(queue_pad) != Gst.PadLinkReturn.OK:
+                raise RuntimeError("Failed to link tee to recording branch")
 
-        for element in (queue, jpegparse, mux, filesink):
-            element.sync_state_with_parent()
+            for element in (queue, jpegparse, mux, filesink):
+                element.sync_state_with_parent()
 
-        self._recording = RecordingBranch(
-            pad=tee_pad, elements=[queue, jpegparse, mux, filesink], location=location
-        )
+            self._recording = RecordingBranch(
+                pad=tee_pad,
+                elements=[queue, jpegparse, mux, filesink],
+                location=location,
+            )
 
     def stop_recording(self) -> pathlib.Path:
-        if self._recording is None:
-            raise RuntimeError("No recording in progress")
+        with self._recording_lock:
+            branch = self._recording
+            if branch is None:
+                raise RuntimeError("No recording in progress")
 
-        branch = self._recording
-        self._recording = None
+            self._recording = None
 
-        sink_pad = branch.elements[0].get_static_pad("sink")
-        if sink_pad:
-            sink_pad.send_event(Gst.Event.new_eos())
+            eos_event = threading.Event()
 
-        bus = self._pipeline.get_bus()
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            message = bus.timed_pop_filtered(
-                Gst.SECOND // 2,
-                Gst.MessageType.EOS | Gst.MessageType.ERROR,
+            def _block_probe(_pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+                src_pad = branch.elements[0].get_static_pad("src")
+                if src_pad:
+                    src_pad.send_event(Gst.Event.new_eos())
+                eos_event.set()
+                return Gst.PadProbeReturn.REMOVE
+
+            probe_id = branch.pad.add_probe(
+                Gst.PadProbeType.BLOCK_DOWNSTREAM, _block_probe
             )
-            if message is None:
-                continue
-            if message.type == Gst.MessageType.ERROR:
-                err, debug = message.parse_error()
-                logging.error("Error stopping recording: %s %s", err, debug)
-                break
-            if message.src in branch.elements:
-                break
+            if not eos_event.wait(timeout=2):
+                logging.warning(
+                    "Timed out blocking recording branch; removing without EOS"
+                )
+                branch.pad.remove_probe(probe_id)
 
-        for element in reversed(branch.elements):
-            element.set_state(Gst.State.NULL)
-            self._pipeline.remove(element)
+            bus = self._pipeline.get_bus()
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                message = bus.timed_pop_filtered(
+                    Gst.SECOND // 2,
+                    Gst.MessageType.EOS | Gst.MessageType.ERROR,
+                )
+                if message is None:
+                    continue
+                if message.type == Gst.MessageType.ERROR:
+                    err, debug = message.parse_error()
+                    logging.error("Error stopping recording: %s %s", err, debug)
+                    break
+                if message.src in branch.elements:
+                    break
 
-        self._tee.release_request_pad(branch.pad)
+            for element in reversed(branch.elements):
+                element.set_state(Gst.State.NULL)
+                self._pipeline.remove(element)
 
-        return branch.location
+            self._tee.release_request_pad(branch.pad)
+
+            return branch.location
 
     @property
     def is_recording(self) -> bool:
