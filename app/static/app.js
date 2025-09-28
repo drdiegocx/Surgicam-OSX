@@ -5,6 +5,18 @@ const stopButton = document.getElementById("stop-recording");
 const eventsList = document.getElementById("events");
 const recordingInfo = document.getElementById("recording-info");
 
+let previewUrl = null;
+const PREVIEW_REFRESH_MS = 1000;
+
+const refreshPreviewImage = () => {
+  if (!previewUrl) {
+    return;
+  }
+  previewImage.src = `${previewUrl}?t=${Date.now()}`;
+};
+
+setInterval(refreshPreviewImage, PREVIEW_REFRESH_MS);
+
 const protocol = window.location.protocol === "https:" ? "wss" : "ws";
 const ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
 
@@ -41,7 +53,11 @@ const updateRecordingInfo = (status) => {
 
 const updateStatus = (status) => {
   if (status.preview_url) {
-    previewImage.src = status.preview_url;
+    previewUrl = status.preview_url;
+    refreshPreviewImage();
+  } else {
+    previewUrl = null;
+    previewImage.removeAttribute("src");
   }
   statusMessage.textContent = status.preview_active
     ? "Vista previa activa"

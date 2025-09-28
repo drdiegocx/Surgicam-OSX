@@ -18,49 +18,26 @@ logger = logging.getLogger("surgicam.video")
 
 
 class VideoManager:
-    """Controls the preview stream and high-resolution recordings.
-
-    Parameters
-    ----------
-    device : str
-        Path to the camera device (e.g. ``"/dev/video0"``).
-    preview_host : str
-        Network interface for the ustreamer preview service.
-    preview_port : int
-        Port for the ustreamer preview service.
-    preview_resolution : tuple[int, int]
-        Width and height of the low-resolution preview stream.
-    record_resolution : tuple[int, int]
-        Width and height of the high-resolution recording.
-    record_dir : str | os.PathLike[str]
-        Directory where recordings should be stored.
-    ustreamer_bin : str
-        Path to the ``ustreamer`` executable.
-    ffmpeg_bin : str
-        Path to the ``ffmpeg`` executable used for recordings.
-    """
+    """Controls preview snapshots and high-resolution recordings using GStreamer."""
 
     def __init__(
         self,
         *,
         device: str = "/dev/video0",
-        preview_host: str = "0.0.0.0",
-        preview_port: int = 8080,
         preview_resolution: tuple[int, int] = (640, 480),
         record_resolution: tuple[int, int] = (1920, 1080),
         record_dir: str | os.PathLike[str] = "recordings",
-        ustreamer_bin: str | None = None,
-        ffmpeg_bin: str | None = None,
+        preview_cache: str | os.PathLike[str] = "recordings/preview",
+        gst_bin: str | None = None,
     ) -> None:
         self.device = device
-        self.preview_host = preview_host
-        self.preview_port = preview_port
         self.preview_resolution = preview_resolution
         self.record_resolution = record_resolution
         self.record_dir = Path(record_dir)
         self.record_dir.mkdir(parents=True, exist_ok=True)
-        self.ustreamer_bin = ustreamer_bin or os.environ.get("USTREAMER_BIN", "/usr/bin/ustreamer")
-        self.ffmpeg_bin = ffmpeg_bin or os.environ.get("FFMPEG_BIN", "ffmpeg")
+        self.preview_dir = Path(preview_cache)
+        self.preview_dir.mkdir(parents=True, exist_ok=True)
+        self.gst_bin = gst_bin or os.environ.get("GST_LAUNCH_BIN", "gst-launch-1.0")
 
         self._preview_proc: Optional[asyncio.subprocess.Process] = None
         self._recording_proc: Optional[asyncio.subprocess.Process] = None
@@ -71,14 +48,13 @@ class VideoManager:
 
     @property
     def preview_running(self) -> bool:
-        return self._preview_proc is not None and self._preview_proc.returncode is None
+        preview_alive = self._preview_proc is not None and self._preview_proc.returncode is None
+        recording_alive = self._recording_proc is not None and self._recording_proc.returncode is None
+        return preview_alive or recording_alive
 
     @property
     def preview_url(self) -> str:
-        host = self.preview_host
-        if host in {"0.0.0.0", "::"}:
-            host = "localhost"
-        return f"http://{host}:{self.preview_port}/stream"
+        return "/preview.jpg"
 
     @property
     def recording_running(self) -> bool:
@@ -92,125 +68,197 @@ class VideoManager:
     def recording_started_at(self) -> Optional[dt.datetime]:
         return self._recording_started_at
 
+    def latest_preview_frame(self) -> Optional[Path]:
+        """Return the most recent preview frame written by GStreamer."""
+
+        entries: list[tuple[float, Path]] = []
+        for path in self.preview_dir.glob("frame_*.jpg"):
+            if not path.is_file():
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            entries.append((mtime, path))
+
+        if not entries:
+            return None
+
+        entries.sort(key=lambda item: item[0], reverse=True)
+        return entries[0][1]
+
     async def ensure_preview(self) -> None:
-        """Start the preview stream if it is not already running."""
+        """Start the preview snapshots pipeline if required."""
 
         async with self._lock:
             if self.preview_running:
                 return
 
-            width, height = self.preview_resolution
-            command = [
-                self.ustreamer_bin,
-                "--device",
-                self.device,
-                "--host",
-                self.preview_host,
-                "--port",
-                str(self.preview_port),
-                "--format",
-                "MJPEG",
-                "--resolution",
-                f"{width}x{height}",
-                "--persistent",
-                "--allow-origin",
-                "*",
-            ]
-
-            logger.debug("Launching preview command: %s", " ".join(command))
-            self._preview_proc = await self._spawn_process(command)
-            if self._preview_proc.pid is not None:
-                logger.info("Vista previa iniciada (pid=%s) a %sx%s", self._preview_proc.pid, width, height)
+            await self._start_preview_locked()
 
     async def start_recording(self) -> Path:
-        """Start a high-resolution recording.
-
-        Returns
-        -------
-        pathlib.Path
-            The path to the recording file.
-        """
+        """Start a high-resolution recording and return the output directory."""
 
         async with self._lock:
             if self.recording_running:
                 raise RuntimeError("Recording already in progress")
 
-            width, height = self.record_resolution
             recording_id = uuid.uuid4().hex
-            output_path = self.record_dir / f"recording_{recording_id}.mp4"
+            output_dir = self.record_dir / f"recording_{recording_id}"
+            output_dir.mkdir(parents=True, exist_ok=True)
 
-            command = [
-                self.ffmpeg_bin,
-                "-y",
-                "-f",
-                "v4l2",
-                "-input_format",
-                "mjpeg",
-                "-video_size",
-                f"{width}x{height}",
-                "-i",
-                self.device,
-                "-vcodec",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-pix_fmt",
-                "yuv420p",
-                str(output_path),
-            ]
+            if self._preview_proc is not None and self._preview_proc.returncode is None:
+                await self._stop_process(self._preview_proc)
+            self._preview_proc = None
 
+            command = self._recording_command(output_dir)
             logger.debug("Launching recording command: %s", " ".join(command))
-            self._recording_proc = await self._spawn_process(command)
-            self._recording_path = output_path
+            try:
+                self._recording_proc = await self._spawn_process(command)
+            except Exception:
+                # Restore preview pipeline if the recording pipeline fails to start.
+                await self._start_preview_locked()
+                raise
+            self._recording_path = output_dir
             self._recording_started_at = dt.datetime.utcnow()
             if self._recording_proc.pid is not None:
+                width, height = self.record_resolution
                 logger.info(
                     "Proceso de grabación iniciado (pid=%s) a %sx%s en %s",
                     self._recording_proc.pid,
                     width,
                     height,
-                    output_path,
+                    output_dir,
                 )
-            return output_path
+            return output_dir
 
     async def stop_recording(self) -> Optional[Path]:
-        """Stop the recording process if running and return the output path."""
+        """Stop the recording process if running and return the output directory."""
 
         async with self._lock:
             if not self.recording_running:
                 return None
 
             assert self._recording_proc is not None
-            self._recording_proc.send_signal(signal.SIGINT)
-            await self._recording_proc.wait()
+            await self._stop_process(self._recording_proc)
 
             output = self._recording_path
             self._recording_proc = None
             self._recording_path = None
             self._recording_started_at = None
+
+            await self._start_preview_locked()
             return output
 
     async def shutdown(self) -> None:
         """Terminate all managed processes."""
 
         async with self._lock:
-            if self.preview_running:
-                assert self._preview_proc is not None
-                self._preview_proc.terminate()
-                await self._preview_proc.wait()
+            if self._preview_proc is not None:
+                await self._stop_process(self._preview_proc)
                 self._preview_proc = None
 
-            if self.recording_running:
-                assert self._recording_proc is not None
-                self._recording_proc.terminate()
-                await self._recording_proc.wait()
+            if self._recording_proc is not None:
+                await self._stop_process(self._recording_proc)
                 self._recording_proc = None
+
             self._recording_path = None
             self._recording_started_at = None
 
             for task in list(self._drain_tasks):
                 task.cancel()
             self._drain_tasks.clear()
+
+    async def _start_preview_locked(self) -> None:
+        command = self._preview_command()
+        logger.debug("Launching preview command: %s", " ".join(command))
+        self._preview_proc = await self._spawn_process(command)
+        if self._preview_proc.pid is not None:
+            width, height = self.preview_resolution
+            logger.info(
+                "Vista previa iniciada (pid=%s) a %sx%s",
+                self._preview_proc.pid,
+                width,
+                height,
+            )
+
+    def _preview_command(self) -> list[str]:
+        width, height = self.preview_resolution
+        location = str(self.preview_dir / "frame_%06d.jpg")
+        return [
+            self.gst_bin,
+            "-q",
+            "v4l2src",
+            f"device={self.device}",
+            "io-mode=dmabuf",
+            "!",
+            f"image/jpeg,width={width},height={height}",
+            "!",
+            "queue",
+            "leaky=downstream",
+            "max-size-buffers=1",
+            "!",
+            "multifilesink",
+            f"location={location}",
+            "max-files=5",
+            "post-messages=true",
+        ]
+
+    def _recording_command(self, output_dir: Path) -> list[str]:
+        record_location = str(output_dir / "frame_%06d.jpg")
+        preview_location = str(self.preview_dir / "frame_%06d.jpg")
+        r_width, r_height = self.record_resolution
+        p_width, p_height = self.preview_resolution
+        return [
+            self.gst_bin,
+            "-q",
+            "v4l2src",
+            f"device={self.device}",
+            "io-mode=dmabuf",
+            "!",
+            f"image/jpeg,width={r_width},height={r_height}",
+            "!",
+            "tee",
+            "name=t",
+            "t.",
+            "!",
+            "queue",
+            "leaky=downstream",
+            "max-size-buffers=1",
+            "!",
+            "jpegdec",
+            "!",
+            "videoscale",
+            "!",
+            f"video/x-raw,width={p_width},height={p_height}",
+            "!",
+            "videoconvert",
+            "!",
+            "jpegenc",
+            "quality=85",
+            "!",
+            "multifilesink",
+            f"location={preview_location}",
+            "max-files=5",
+            "post-messages=true",
+            "t.",
+            "!",
+            "queue",
+            "!",
+            "multifilesink",
+            f"location={record_location}",
+        ]
+
+    async def _stop_process(self, process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+
+        process.send_signal(signal.SIGINT)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
 
     async def _spawn_process(self, command: list[str]) -> asyncio.subprocess.Process:
         try:

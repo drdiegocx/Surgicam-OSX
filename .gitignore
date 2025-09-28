@@ -201,6 +201,13 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Cámara - archivos generados
+recordings/*
+!recordings/.gitkeep
+!recordings/preview/
+recordings/preview/*
+!recordings/preview/.gitkeep
+
 # Marimo
 marimo/_static/
 marimo/_lsp/

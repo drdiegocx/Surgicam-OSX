@@ -6,8 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from .services.video_manager import ProcessError, VideoManager
@@ -41,10 +41,12 @@ def _parse_resolution(env_var: str, fallback: tuple[int, int]) -> tuple[int, int
         return fallback
 
 
-preview_resolution = _parse_resolution("PREVIEW_RESOLUTION", (640, 480))
-record_resolution = _parse_resolution("RECORD_RESOLUTION", (1920, 1080))
+preview_resolution = _parse_resolution("PREVIEW_RES", (640, 480))
+record_resolution = _parse_resolution("RECORD_RES", (1920, 1080))
+device_path = os.getenv("DEVICE_PATH", "/dev/video0")
 
 video_manager = VideoManager(
+    device=device_path,
     preview_resolution=preview_resolution,
     record_resolution=record_resolution,
 )
@@ -89,12 +91,17 @@ clients = ClientRegistry()
 
 
 def _preview_url_for(websocket: WebSocket) -> str:
-    if video_manager.preview_host not in {"0.0.0.0", "::"}:
-        host = video_manager.preview_host
-    else:
-        host = websocket.url.hostname or "localhost"
+    preview_url = video_manager.preview_url
+    if preview_url.startswith(("http://", "https://")):
+        return preview_url
+
+    host = websocket.url.hostname or "localhost"
+    port = websocket.url.port
     scheme = "https" if websocket.url.scheme == "wss" else "http"
-    return f"{scheme}://{host}:{video_manager.preview_port}/stream"
+    path = preview_url if preview_url.startswith("/") else f"/{preview_url}"
+    if port is None:
+        return f"{scheme}://{host}{path}"
+    return f"{scheme}://{host}:{port}{path}"
 
 
 def _current_status(websocket: WebSocket | None = None) -> dict[str, Any]:
@@ -121,10 +128,11 @@ async def startup_event() -> None:
         record_resolution[0],
         record_resolution[1],
     )
+    logger.info("Dispositivo de captura: %s", device_path)
     try:
         await video_manager.ensure_preview()
     except ProcessError as exc:
-        logger.error("No se pudo iniciar ustreamer: %s", exc)
+        logger.error("No se pudo iniciar la vista previa con GStreamer: %s", exc)
 
 
 @app.on_event("shutdown")
@@ -136,6 +144,20 @@ async def shutdown_event() -> None:
 async def index() -> HTMLResponse:
     html_path = BASE_DIR / "templates" / "index.html"
     return HTMLResponse(html_path.read_text(encoding="utf8"))
+
+
+@app.get("/preview.jpg")
+async def preview_image() -> FileResponse:
+    await video_manager.ensure_preview()
+    frame_path = video_manager.latest_preview_frame()
+    if frame_path is None or not frame_path.exists():
+        raise HTTPException(status_code=503, detail="Vista previa no disponible")
+
+    headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+    }
+    return FileResponse(frame_path, media_type="image/jpeg", headers=headers)
 
 
 @app.websocket("/ws")
