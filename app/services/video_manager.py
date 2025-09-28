@@ -1,90 +1,85 @@
-"""Video streaming and recording process management utilities."""
+"""Video streaming and recording management using a single UVC device."""
 
 from __future__ import annotations
 
 import asyncio
 import datetime as dt
 import logging
-import os
-import signal
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
 
+import cv2
+import numpy as np
+
 
 class ProcessError(RuntimeError):
-    """Raised when a managed process fails to start."""
+    """Raised when the camera or recorder cannot be initialised."""
 
 
 logger = logging.getLogger("surgicam.video")
 
 
 class VideoManager:
-    """Controls the preview stream and high-resolution recordings.
+    """Capture frames from a UVC device and provide preview/recording.
 
-    Parameters
-    ----------
-    device : str
-        Path to the camera device (e.g. ``"/dev/video0"``).
-    preview_host : str
-        Network interface for the ustreamer preview service.
-    preview_port : int
-        Port for the ustreamer preview service.
-    preview_resolution : tuple[int, int]
-        Width and height of the low-resolution preview stream.
-    record_resolution : tuple[int, int]
-        Width and height of the high-resolution recording.
-    record_dir : str | os.PathLike[str]
-        Directory where recordings should be stored.
-    ustreamer_bin : str
-        Path to the ``ustreamer`` executable.
-    ffmpeg_bin : str
-        Path to the ``ffmpeg`` executable used for recordings.
+    A background thread pulls frames from the configured device. Preview
+    subscribers receive downscaled JPEG frames via asyncio queues so the
+    FastAPI application can forward them over WebSocket connections. When
+    a recording is requested, the same frames are written to disk without
+    interrupting the preview flow.
     """
 
     def __init__(
         self,
         *,
         device: str = "/dev/video0",
-        preview_host: str = "0.0.0.0",
-        preview_port: int = 8080,
         preview_resolution: tuple[int, int] = (640, 480),
         record_resolution: tuple[int, int] = (1920, 1080),
-        record_dir: str | os.PathLike[str] = "recordings",
-        ustreamer_bin: str | None = None,
-        ffmpeg_bin: str | None = None,
+        preview_fps: float = 15.0,
+        record_fps: float = 30.0,
+        jpeg_quality: int = 80,
+        record_dir: str | Path = "recordings",
     ) -> None:
         self.device = device
-        self.preview_host = preview_host
-        self.preview_port = preview_port
         self.preview_resolution = preview_resolution
         self.record_resolution = record_resolution
+        self.preview_fps = preview_fps
+        self.record_fps = record_fps
+        self.jpeg_quality = max(1, min(int(jpeg_quality), 100))
         self.record_dir = Path(record_dir)
         self.record_dir.mkdir(parents=True, exist_ok=True)
-        self.ustreamer_bin = ustreamer_bin or os.environ.get("USTREAMER_BIN", "/usr/bin/ustreamer")
-        self.ffmpeg_bin = ffmpeg_bin or os.environ.get("FFMPEG_BIN", "ffmpeg")
 
-        self._preview_proc: Optional[asyncio.subprocess.Process] = None
-        self._recording_proc: Optional[asyncio.subprocess.Process] = None
+        self._async_lock = asyncio.Lock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._preview_consumers: dict[str, asyncio.Queue[Optional[bytes]]] = {}
+
+        self._capture_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._ready_event = threading.Event()
+        self._running = threading.Event()
+        self._last_error: Optional[str] = None
+
+        self._record_lock = threading.Lock()
+        self._record_writer: Optional[cv2.VideoWriter] = None
         self._recording_path: Optional[Path] = None
         self._recording_started_at: Optional[dt.datetime] = None
-        self._lock = asyncio.Lock()
-        self._drain_tasks: set[asyncio.Task[None]] = set()
 
+        self._preview_interval = 1.0 / self.preview_fps if self.preview_fps > 0 else 0.0
+        self._last_preview_timestamp = 0.0
+
+    # ------------------------------------------------------------------
+    # Properties for external status inspection
     @property
     def preview_running(self) -> bool:
-        return self._preview_proc is not None and self._preview_proc.returncode is None
-
-    @property
-    def preview_url(self) -> str:
-        host = self.preview_host
-        if host in {"0.0.0.0", "::"}:
-            host = "localhost"
-        return f"http://{host}:{self.preview_port}/stream"
+        return self._running.is_set()
 
     @property
     def recording_running(self) -> bool:
-        return self._recording_proc is not None and self._recording_proc.returncode is None
+        with self._record_lock:
+            return self._record_writer is not None
 
     @property
     def recording_path(self) -> Optional[Path]:
@@ -94,170 +89,217 @@ class VideoManager:
     def recording_started_at(self) -> Optional[dt.datetime]:
         return self._recording_started_at
 
+    # ------------------------------------------------------------------
     async def ensure_preview(self) -> None:
-        """Start the preview stream if it is not already running."""
+        """Start the capture thread when required."""
 
-        async with self._lock:
+        async with self._async_lock:
             if self.preview_running:
                 return
 
-            width, height = self.preview_resolution
-            command = [
-                self.ustreamer_bin,
-                "--device",
-                self.device,
-                "--host",
-                self.preview_host,
-                "--port",
-                str(self.preview_port),
-                "--format",
-                "MJPEG",
-                "--resolution",
-                f"{width}x{height}",
-                "--persistent",
-                "--allow-origin",
-                "*",
-            ]
+            self._loop = asyncio.get_running_loop()
+            self._stop_event.clear()
+            self._ready_event.clear()
+            self._capture_thread = threading.Thread(
+                target=self._capture_loop,
+                name="surgicam-capture",
+                daemon=True,
+            )
+            self._capture_thread.start()
 
-            logger.debug("Launching preview command: %s", " ".join(command))
-            self._preview_proc = await self._spawn_process(command)
-            if self._preview_proc.pid is not None:
-                logger.info("Vista previa iniciada (pid=%s) a %sx%s", self._preview_proc.pid, width, height)
+        # Wait for the capture thread to confirm startup or error
+        await asyncio.to_thread(self._ready_event.wait)
+
+        if not self.preview_running:
+            error = self._last_error or "Camera thread failed to start"
+            raise ProcessError(error)
 
     async def start_recording(self) -> Path:
-        """Start a high-resolution recording.
+        async with self._async_lock:
+            if not self.preview_running:
+                await self.ensure_preview()
 
-        Returns
-        -------
-        pathlib.Path
-            The path to the recording file.
-        """
-
-        async with self._lock:
             if self.recording_running:
                 raise RuntimeError("Recording already in progress")
 
-            width, height = self.record_resolution
             recording_id = uuid.uuid4().hex
             output_path = self.record_dir / f"recording_{recording_id}.mp4"
+            width, height = self.record_resolution
 
-            command = [
-                self.ffmpeg_bin,
-                "-y",
-                "-f",
-                "v4l2",
-                "-input_format",
-                "mjpeg",
-                "-video_size",
-                f"{width}x{height}",
-                "-i",
-                self.device,
-                "-vcodec",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-pix_fmt",
-                "yuv420p",
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            writer = cv2.VideoWriter(
                 str(output_path),
-            ]
+                fourcc,
+                float(self.record_fps),
+                (int(width), int(height)),
+            )
 
-            logger.debug("Launching recording command: %s", " ".join(command))
-            self._recording_proc = await self._spawn_process(command)
-            self._recording_path = output_path
-            self._recording_started_at = dt.datetime.utcnow()
-            if self._recording_proc.pid is not None:
-                logger.info(
-                    "Proceso de grabación iniciado (pid=%s) a %sx%s en %s",
-                    self._recording_proc.pid,
-                    width,
-                    height,
-                    output_path,
-                )
+            if not writer.isOpened():
+                writer.release()
+                raise ProcessError("No se pudo inicializar el grabador de video")
+
+            with self._record_lock:
+                self._record_writer = writer
+                self._recording_path = output_path
+                self._recording_started_at = dt.datetime.utcnow()
+
+            logger.info("Grabación iniciada en %s", output_path)
             return output_path
 
     async def stop_recording(self) -> Optional[Path]:
-        """Stop the recording process if running and return the output path."""
-
-        async with self._lock:
+        async with self._async_lock:
             if not self.recording_running:
                 return None
 
-            assert self._recording_proc is not None
-            self._recording_proc.send_signal(signal.SIGINT)
-            await self._recording_proc.wait()
+            with self._record_lock:
+                writer = self._record_writer
+                self._record_writer = None
+                output = self._recording_path
+                self._recording_path = None
+                self._recording_started_at = None
 
-            output = self._recording_path
-            self._recording_proc = None
-            self._recording_path = None
-            self._recording_started_at = None
+            if writer is not None:
+                writer.release()
+                logger.info("Grabación detenida")
+
             return output
 
     async def shutdown(self) -> None:
-        """Terminate all managed processes."""
+        async with self._async_lock:
+            if not self.preview_running and not self.recording_running:
+                return
 
-        async with self._lock:
-            if self.preview_running:
-                assert self._preview_proc is not None
-                self._preview_proc.terminate()
-                await self._preview_proc.wait()
-                self._preview_proc = None
+            self._stop_event.set()
 
-            if self.recording_running:
-                assert self._recording_proc is not None
-                self._recording_proc.terminate()
-                await self._recording_proc.wait()
-                self._recording_proc = None
+        if self._capture_thread is not None:
+            await asyncio.to_thread(self._capture_thread.join)
+            self._capture_thread = None
+
+        with self._record_lock:
+            writer = self._record_writer
+            self._record_writer = None
             self._recording_path = None
             self._recording_started_at = None
 
-            for task in list(self._drain_tasks):
-                task.cancel()
-            self._drain_tasks.clear()
+        if writer is not None:
+            writer.release()
 
-    async def _spawn_process(self, command: list[str]) -> asyncio.subprocess.Process:
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *command,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError as exc:  # pragma: no cover - environment specific
-            raise ProcessError(f"Executable not found: {command[0]}") from exc
+        self._running.clear()
+        self._ready_event.clear()
+        self._stop_event.clear()
 
-        await asyncio.sleep(0.1)
-        logger.debug("Spawned %s with pid=%s", command[0], getattr(process, "pid", "?"))
-        if process.returncode is not None:
-            stderr = await process.stderr.read()
-            logger.error(
-                "Proceso %s finalizó inmediatamente con código %s", command[0], process.returncode
-            )
-            raise ProcessError(
-                f"Failed to start process {command[0]} (code={process.returncode}). "
-                f"Stderr: {stderr.decode().strip()}"
-            )
-
-        self._start_drain_task(process.stderr, command[0])
-        return process
-
-    def _start_drain_task(self, stream: asyncio.StreamReader | None, name: str) -> None:
-        if stream is None:
-            return
-
-        async def _drain() -> None:
+        # Notify any waiting preview subscribers so they can exit cleanly
+        for queue in list(self._preview_consumers.values()):
             try:
-                while True:
-                    chunk = await stream.readline()
-                    if not chunk:
-                        break
-                    logger.debug("%s: %s", name, chunk.decode(errors="ignore").rstrip())
-            except asyncio.CancelledError:  # pragma: no cover - cooperative cancellation
-                raise
-            except Exception:  # pragma: no cover - best effort logging
-                logger.exception("Error draining output for %%s", name)
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+        self._preview_consumers.clear()
 
-        task = asyncio.create_task(_drain())
-        self._drain_tasks.add(task)
+    # ------------------------------------------------------------------
+    def subscribe_preview(self) -> tuple[str, asyncio.Queue[Optional[bytes]]]:
+        if self._loop is None:
+            raise RuntimeError("Preview loop not initialised")
 
-        def _cleanup(t: asyncio.Task[None]) -> None:
-            self._drain_tasks.discard(t)
-        task.add_done_callback(_cleanup)
+        queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=1)
+        token = uuid.uuid4().hex
+        self._preview_consumers[token] = queue
+        return token, queue
+
+    def unsubscribe_preview(self, token: str) -> None:
+        queue = self._preview_consumers.pop(token, None)
+        if queue is not None:
+            try:
+                queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+
+    # ------------------------------------------------------------------
+    def _capture_loop(self) -> None:
+        try:
+            capture = cv2.VideoCapture(self.device)
+            if not capture.isOpened():
+                self._last_error = f"No se pudo abrir la cámara {self.device}"
+                logger.error(self._last_error)
+                return
+
+            width, height = self.record_resolution
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, float(width))
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(height))
+            if self.record_fps > 0:
+                capture.set(cv2.CAP_PROP_FPS, float(self.record_fps))
+
+            self._running.set()
+            self._last_error = None
+            self._ready_event.set()
+
+            jpeg_params = [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality]
+
+            while not self._stop_event.is_set():
+                ok, frame = capture.read()
+                if not ok:
+                    logger.warning("Fallo al leer frame de la cámara")
+                    time.sleep(0.05)
+                    continue
+
+                with self._record_lock:
+                    writer = self._record_writer
+                if writer is not None:
+                    writer.write(frame)
+
+                now = time.monotonic()
+                if self._preview_interval == 0 or now - self._last_preview_timestamp >= self._preview_interval:
+                    preview_frame = self._prepare_preview_frame(frame)
+                    if preview_frame is not None:
+                        success, buffer = cv2.imencode(".jpg", preview_frame, jpeg_params)
+                        if success:
+                            self._schedule_broadcast(buffer.tobytes())
+                    self._last_preview_timestamp = now
+
+        except Exception:  # pragma: no cover - camera failures are hardware specific
+            logger.exception("Error en el hilo de captura de video")
+            self._last_error = "Fallo inesperado en la captura de video"
+        finally:
+            self._running.clear()
+            self._ready_event.set()
+            for queue in list(self._preview_consumers.values()):
+                try:
+                    queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    pass
+            self._capture_thread = None
+            try:
+                capture.release()
+            except UnboundLocalError:
+                # capture was never created successfully
+                pass
+
+    def _prepare_preview_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
+        width, height = self.preview_resolution
+        if width <= 0 or height <= 0:
+            return frame
+        try:
+            return cv2.resize(frame, (int(width), int(height)))
+        except Exception:  # pragma: no cover - defensive programming
+            logger.exception("No se pudo redimensionar el frame de vista previa")
+            return frame
+
+    def _schedule_broadcast(self, frame_bytes: bytes) -> None:
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            return
+        loop.call_soon_threadsafe(self._broadcast_frame, frame_bytes)
+
+    def _broadcast_frame(self, frame_bytes: bytes) -> None:
+        for queue in list(self._preview_consumers.values()):
+            if queue.full():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                queue.put_nowait(frame_bytes)
+            except asyncio.QueueFull:
+                # Another coroutine pushed a sentinel concurrently; ignore
+                pass
+

@@ -41,12 +41,67 @@ def _parse_resolution(env_var: str, fallback: tuple[int, int]) -> tuple[int, int
         return fallback
 
 
+def _parse_float(env_var: str, fallback: float) -> float:
+    value = os.getenv(env_var)
+    if not value:
+        return fallback
+    try:
+        parsed = float(value)
+        if parsed <= 0:
+            raise ValueError
+        return parsed
+    except ValueError:
+        logger.warning(
+            "Valor inválido para %s=%r. Usando valor por defecto %s.",
+            env_var,
+            value,
+            fallback,
+        )
+        return fallback
+
+
+def _parse_int(env_var: str, fallback: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    value = os.getenv(env_var)
+    if value is None:
+        return fallback
+    try:
+        parsed = int(value)
+    except ValueError:
+        logger.warning("Valor inválido para %s=%r. Usando %s.", env_var, value, fallback)
+        return fallback
+
+    if minimum is not None and parsed < minimum:
+        logger.warning(
+            "Valor demasiado bajo para %s=%r. Usando %s.",
+            env_var,
+            value,
+            fallback,
+        )
+        return fallback
+    if maximum is not None and parsed > maximum:
+        logger.warning(
+            "Valor demasiado alto para %s=%r. Usando %s.",
+            env_var,
+            value,
+            fallback,
+        )
+        return fallback
+    return parsed
+
+
 preview_resolution = _parse_resolution("PREVIEW_RESOLUTION", (640, 480))
 record_resolution = _parse_resolution("RECORD_RESOLUTION", (1920, 1080))
+preview_fps = _parse_float("PREVIEW_FPS", 15.0)
+record_fps = _parse_float("RECORD_FPS", 30.0)
+jpeg_quality = _parse_int("PREVIEW_JPEG_QUALITY", 80, minimum=10, maximum=100)
 
 video_manager = VideoManager(
+    device=os.getenv("VIDEO_DEVICE", "/dev/video0"),
     preview_resolution=preview_resolution,
     record_resolution=record_resolution,
+    preview_fps=preview_fps,
+    record_fps=record_fps,
+    jpeg_quality=jpeg_quality,
 )
 
 
@@ -88,23 +143,11 @@ class ClientRegistry:
 clients = ClientRegistry()
 
 
-def _preview_url_for(websocket: WebSocket) -> str:
-    if video_manager.preview_host not in {"0.0.0.0", "::"}:
-        host = video_manager.preview_host
-    else:
-        host = websocket.url.hostname or "localhost"
-    scheme = "https" if websocket.url.scheme == "wss" else "http"
-    return f"{scheme}://{host}:{video_manager.preview_port}/stream"
-
-
 def _current_status(websocket: WebSocket | None = None) -> dict[str, Any]:
-    preview_url = video_manager.preview_url
-    if websocket is not None:
-        preview_url = _preview_url_for(websocket)
     status: dict[str, Any] = {
         "type": "status",
-        "preview_url": preview_url,
         "preview_active": video_manager.preview_running,
+        "preview_fps": video_manager.preview_fps,
         "recording": video_manager.recording_running,
         "recording_path": str(video_manager.recording_path) if video_manager.recording_path else None,
         "recording_started_at": video_manager.recording_started_at.isoformat() if video_manager.recording_started_at else None,
@@ -115,16 +158,18 @@ def _current_status(websocket: WebSocket | None = None) -> dict[str, Any]:
 @app.on_event("startup")
 async def startup_event() -> None:
     logger.info(
-        "Configuración de resolución - Vista previa: %sx%s, Grabación: %sx%s",
+        "Configuración de video - Vista previa: %sx%s@%sfps, Grabación: %sx%s@%sfps",
         preview_resolution[0],
         preview_resolution[1],
+        preview_fps,
         record_resolution[0],
         record_resolution[1],
+        record_fps,
     )
     try:
         await video_manager.ensure_preview()
     except ProcessError as exc:
-        logger.error("No se pudo iniciar ustreamer: %s", exc)
+        logger.error("No se pudo iniciar la cámara: %s", exc)
 
 
 @app.on_event("shutdown")
@@ -158,6 +203,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         pass
     finally:
         await clients.disconnect(websocket)
+
+
+@app.websocket("/ws/preview")
+async def preview_stream(websocket: WebSocket) -> None:
+    try:
+        await video_manager.ensure_preview()
+    except ProcessError as exc:
+        await websocket.close(code=1011, reason=str(exc))
+        return
+    await websocket.accept()
+    token, queue = video_manager.subscribe_preview()
+    try:
+        while True:
+            frame = await queue.get()
+            if frame is None:
+                break
+            await websocket.send_bytes(frame)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        video_manager.unsubscribe_preview(token)
 
 
 async def _handle_start_recording(websocket: WebSocket) -> None:

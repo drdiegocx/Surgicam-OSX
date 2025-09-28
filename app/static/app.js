@@ -6,7 +6,36 @@ const eventsList = document.getElementById("events");
 const recordingInfo = document.getElementById("recording-info");
 
 const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-const ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
+const baseUrl = `${protocol}://${window.location.host}`;
+const controlSocket = new WebSocket(`${baseUrl}/ws`);
+const previewSocket = new WebSocket(`${baseUrl}/ws/preview`);
+previewSocket.binaryType = "arraybuffer";
+
+let controlConnected = false;
+let previewConnected = false;
+let latestStatus = null;
+
+const updateConnectionStatus = () => {
+  if (previewConnected && (latestStatus?.preview_active ?? true)) {
+    const fpsValue = Number(latestStatus.preview_fps || 0);
+    const fps = fpsValue > 0 ? ` @ ${fpsValue.toFixed(1).replace(/\.0$/, "")} fps` : "";
+    statusMessage.textContent = `Vista previa activa${fps}`;
+  } else if (previewConnected) {
+    statusMessage.textContent = "Vista previa conectada";
+  } else if (controlConnected) {
+    statusMessage.textContent = "Control conectado";
+  } else {
+    statusMessage.textContent = "Desconectado";
+  }
+};
+
+const sendControlMessage = (payload) => {
+  if (controlSocket.readyState !== WebSocket.OPEN) {
+    addEvent("Control desconectado. No se pudo enviar el comando.");
+    return;
+  }
+  controlSocket.send(JSON.stringify(payload));
+};
 
 const formatTimestamp = (isoString) => {
   if (!isoString) {
@@ -40,21 +69,18 @@ const updateRecordingInfo = (status) => {
 };
 
 const updateStatus = (status) => {
-  if (status.preview_url) {
-    previewImage.src = status.preview_url;
-  }
-  statusMessage.textContent = status.preview_active
-    ? "Vista previa activa"
-    : "Vista previa detenida";
+  latestStatus = status;
+  updateConnectionStatus();
   updateButtons(status.recording);
   updateRecordingInfo(status);
 };
 
-ws.addEventListener("open", () => {
-  statusMessage.textContent = "Conectado";
+controlSocket.addEventListener("open", () => {
+  controlConnected = true;
+  updateConnectionStatus();
 });
 
-ws.addEventListener("message", (event) => {
+controlSocket.addEventListener("message", (event) => {
   const payload = JSON.parse(event.data);
   switch (payload.type) {
     case "status":
@@ -78,15 +104,46 @@ ws.addEventListener("message", (event) => {
   }
 });
 
-ws.addEventListener("close", () => {
-  statusMessage.textContent = "Desconectado";
+controlSocket.addEventListener("close", () => {
+  controlConnected = false;
+  updateConnectionStatus();
   updateButtons(false);
 });
 
+controlSocket.addEventListener("error", () => {
+  addEvent("Error en la conexión de control");
+});
+
 startButton.addEventListener("click", () => {
-  ws.send(JSON.stringify({ action: "start_recording" }));
+  sendControlMessage({ action: "start_recording" });
 });
 
 stopButton.addEventListener("click", () => {
-  ws.send(JSON.stringify({ action: "stop_recording" }));
+  sendControlMessage({ action: "stop_recording" });
+});
+
+previewSocket.addEventListener("open", () => {
+  previewConnected = true;
+  updateConnectionStatus();
+});
+
+previewSocket.addEventListener("close", () => {
+  previewConnected = false;
+  updateConnectionStatus();
+});
+
+previewSocket.addEventListener("error", () => {
+  addEvent("Error en la conexión de vista previa");
+});
+
+previewSocket.addEventListener("message", (event) => {
+  if (typeof event.data === "string") {
+    return;
+  }
+  const blob = new Blob([event.data], { type: "image/jpeg" });
+  const url = URL.createObjectURL(blob);
+  previewImage.src = url;
+  previewImage.onload = () => {
+    URL.revokeObjectURL(url);
+  };
 });
