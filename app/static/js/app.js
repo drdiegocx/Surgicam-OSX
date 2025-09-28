@@ -49,6 +49,7 @@
   previewImg.src = streamUrl;
 
   const MINI_MAP_REFRESH_MS = 4000;
+  const RANGE_UPDATE_DEBOUNCE_MS = 150;
   let miniMapIntervalId;
   let lastMiniMapUpdate = 0;
 
@@ -83,6 +84,30 @@
   let reconnectTimer;
   const messageQueue = [];
   const pendingControlUpdates = new Set();
+  const rangeUpdateTimers = new Map();
+
+  function cancelRangeUpdate(controlId) {
+    const timerId = rangeUpdateTimers.get(controlId);
+    if (timerId) {
+      window.clearTimeout(timerId);
+      rangeUpdateTimers.delete(controlId);
+    }
+  }
+
+  function queueRangeUpdate(controlId, value, immediate) {
+    if (immediate) {
+      cancelRangeUpdate(controlId);
+      sendControlUpdate(controlId, { value });
+      return;
+    }
+
+    cancelRangeUpdate(controlId);
+    const timerId = window.setTimeout(function () {
+      rangeUpdateTimers.delete(controlId);
+      sendControlUpdate(controlId, { value });
+    }, RANGE_UPDATE_DEBOUNCE_MS);
+    rangeUpdateTimers.set(controlId, timerId);
+  }
 
   const panButtons = document.querySelectorAll('[data-pan]');
   const minZoom = zoomSlider ? Math.max(1, (Number(zoomSlider.min) / 100) || 1) : 1;
@@ -1295,12 +1320,28 @@
         if (metadata.valueElement) {
           metadata.valueElement.textContent = formatValue(Number(range.value), control.type);
         }
+        const rawValue =
+          normalizedType === 'float' || normalizedType === 'double'
+            ? parseFloat(range.value)
+            : parseInt(range.value, 10);
+        queueRangeUpdate(control.id, rawValue, false);
       });
       range.addEventListener('change', function () {
-        const raw = normalizedType === 'float' || normalizedType === 'double'
-          ? parseFloat(range.value)
-          : parseInt(range.value, 10);
-        sendControlUpdate(control.id, { value: raw });
+        const raw =
+          normalizedType === 'float' || normalizedType === 'double'
+            ? parseFloat(range.value)
+            : parseInt(range.value, 10);
+        queueRangeUpdate(control.id, raw, true);
+      });
+      range.addEventListener('pointerdown', function () {
+        cancelRangeUpdate(control.id);
+      });
+      range.addEventListener('pointerup', function () {
+        const raw =
+          normalizedType === 'float' || normalizedType === 'double'
+            ? parseFloat(range.value)
+            : parseInt(range.value, 10);
+        queueRangeUpdate(control.id, raw, true);
       });
       card.appendChild(range);
       inputElement = range;
