@@ -79,11 +79,14 @@ def _update_controls_cache(control: ControlInfo) -> None:
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     preview_port = settings.USTREAMER_PORT
+    source_width, source_height = manager.source_resolution
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "preview_port": preview_port,
+            "source_width": source_width,
+            "source_height": source_height,
         },
     )
 
@@ -245,14 +248,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
             command = payload.get("command")
             if command == "start":
+                roi_payload = payload.get("roi")
                 try:
-                    response = await manager.start_recording()
+                    response = await manager.start_recording(roi=roi_payload)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Error al iniciar grabación: %s", exc)
                     await websocket.send_json(
                         {
                             "status": "error",
-                            "detail": "No se pudo iniciar la grabación.",
+                            "detail": (
+                                "Parámetros de ROI inválidos."
+                                if isinstance(exc, ValueError)
+                                else "No se pudo iniciar la grabación."
+                            ),
                         }
                     )
                 else:

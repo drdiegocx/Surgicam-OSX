@@ -1,6 +1,9 @@
 (function () {
   const body = document.body;
   const previewPort = body.dataset.previewPort;
+  const sourceWidth = Number(body.dataset.sourceWidth) || 1280;
+  const sourceHeight = Number(body.dataset.sourceHeight) || 720;
+  const sourceRatio = sourceHeight && sourceWidth ? sourceHeight / sourceWidth : 9 / 16;
   const previewImg = document.getElementById('preview');
   const previewFrame = document.getElementById('previewFrame');
   const miniMap = document.getElementById('roiMiniMap');
@@ -73,15 +76,51 @@
     if (previewImg) {
       previewImg.style.transform = `translate(${-panX * 100}%, ${-panY * 100}%) scale(${zoomLevel})`;
     }
-    if (roiIndicator) {
-      const viewportWidth = Math.min(100, 100 / zoomLevel);
-      const viewportHeight = Math.min(100, 100 / zoomLevel);
-      roiIndicator.style.width = `${viewportWidth}%`;
-      roiIndicator.style.height = `${viewportHeight}%`;
-      roiIndicator.style.left = `${panX * 100}%`;
-      roiIndicator.style.top = `${panY * 100}%`;
+    if (roiIndicator && miniMap) {
+      const frameWidth = miniMap.clientWidth;
+      const frameHeight = miniMap.clientHeight;
+      if (frameWidth && frameHeight) {
+        let displayWidth = frameWidth;
+        let displayHeight = frameWidth * sourceRatio;
+        let offsetX = 0;
+        let offsetY = 0;
+        if (displayHeight > frameHeight) {
+          displayHeight = frameHeight;
+          displayWidth = frameHeight / sourceRatio;
+          offsetX = (frameWidth - displayWidth) / 2;
+        } else {
+          offsetY = (frameHeight - displayHeight) / 2;
+        }
+
+        const viewportWidthPx = displayWidth / zoomLevel;
+        const viewportHeightPx = displayHeight / zoomLevel;
+        const leftPx = offsetX + displayWidth * panX;
+        const topPx = offsetY + displayHeight * panY;
+
+        roiIndicator.style.width = `${viewportWidthPx}px`;
+        roiIndicator.style.height = `${viewportHeightPx}px`;
+        roiIndicator.style.left = `${leftPx}px`;
+        roiIndicator.style.top = `${topPx}px`;
+      }
     }
     updateZoomDisplay();
+  }
+
+  function getCurrentRoi() {
+    clampPan();
+    const width = Math.min(1, 1 / zoomLevel);
+    const height = Math.min(1, 1 / zoomLevel);
+    const maxPanX = Math.max(0, 1 - width);
+    const maxPanY = Math.max(0, 1 - height);
+    const x = Math.min(Math.max(panX, 0), maxPanX);
+    const y = Math.min(Math.max(panY, 0), maxPanY);
+    return {
+      x: Number(x.toFixed(4)),
+      y: Number(y.toFixed(4)),
+      width: Number(width.toFixed(4)),
+      height: Number(height.toFixed(4)),
+      zoom: Number(zoomLevel.toFixed(4)),
+    };
   }
 
   function setZoomLevel(value) {
@@ -120,8 +159,28 @@
     if (!rect.width || !rect.height) {
       return;
     }
-    const relativeX = (event.clientX - rect.left) / rect.width;
-    const relativeY = (event.clientY - rect.top) / rect.height;
+    const frameWidth = rect.width;
+    const frameHeight = rect.height;
+    let displayWidth = frameWidth;
+    let displayHeight = frameWidth * sourceRatio;
+    let offsetX = 0;
+    let offsetY = 0;
+    if (displayHeight > frameHeight) {
+      displayHeight = frameHeight;
+      displayWidth = frameHeight / sourceRatio;
+      offsetX = (frameWidth - displayWidth) / 2;
+    } else {
+      offsetY = (frameHeight - displayHeight) / 2;
+    }
+    if (!displayWidth || !displayHeight) {
+      return;
+    }
+    const clickX = event.clientX - rect.left;
+    const clickY = event.clientY - rect.top;
+    const localX = Math.min(Math.max(clickX - offsetX, 0), displayWidth);
+    const localY = Math.min(Math.max(clickY - offsetY, 0), displayHeight);
+    const relativeX = localX / displayWidth;
+    const relativeY = localY / displayHeight;
     panX = relativeX - 0.5 / zoomLevel;
     panY = relativeY - 0.5 / zoomLevel;
     applyPanZoom();
@@ -166,6 +225,10 @@
   if (previewFrame) {
     previewFrame.addEventListener('click', handlePreviewClick);
   }
+
+  window.addEventListener('resize', function () {
+    applyPanZoom();
+  });
 
   if (panButtons && panButtons.length) {
     panButtons.forEach(function (button) {
@@ -791,7 +854,7 @@
 
   startBtn.addEventListener('click', function () {
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ command: 'start' }));
+      socket.send(JSON.stringify({ command: 'start', roi: getCurrentRoi() }));
     }
   });
 

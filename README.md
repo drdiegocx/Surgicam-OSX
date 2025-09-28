@@ -6,7 +6,7 @@ Solución end-to-end para previsualización MJPEG de baja latencia y grabación 
 
 - **uStreamer** expone la vista previa MJPEG a `http://PI:8000/stream`.
 - **FastAPI** sirve la interfaz web, la API REST y la gestión de procesos.
-- **FFmpeg** captura el flujo MJPEG y genera segmentos MP4 de 10 minutos sin recodificación.
+- **FFmpeg** captura el flujo MJPEG y genera segmentos MP4 de 10 minutos, aplicando recorte ROI cuando se solicita.
 - **WebSocket** coordina los comandos *Start/Stop* y notifica el estado en tiempo real al navegador.
 
 ## Requisitos de hardware y sistema
@@ -123,20 +123,33 @@ Ajusta la ruta al repositorio según tu despliegue.
 ## Vista previa interactiva
 
 - La imagen en vivo incluye zoom digital (1× a 4×) controlado por un deslizador de respuesta inmediata.
-- Un minimapa ROI superpuesto indica el encuadre activo y permite reubicarlo con un clic o arrastre.
+- Un minimapa ROI cuadrado (200×200 px) fijado en la esquina superior derecha refleja el encuadre actual y admite clic o arrastre para reposicionarlo.
 - Botones direccionales facilitan el *panning* fino incluso en pantallas táctiles; un botón central recentra la vista.
 
 ## Operación y métricas
 
 - La vista previa permanece activa aun cuando las grabaciones se inician o detienen.
 - Los segmentos MP4 incluyen `moov` al inicio (`+faststart`) y rotan cada 10 minutos.
-- El consumo de CPU se mantiene bajo al no transcodificar los flujos.
+- Cuando el ROI ocupa el cuadro completo, FFmpeg copia el flujo MJPEG sin recodificar y el uso de CPU se mantiene mínimo.
+- Si el ROI reduce el campo de visión, FFmpeg aplica `crop` y vuelve a codificar con `libx264` (parámetros configurables).
+
+## ROI sincronizado con las grabaciones
+
+- Al presionar **Iniciar grabación**, el navegador envía el ROI normalizado (posición, ancho, alto y zoom) junto con el comando.
+- El backend valida el ROI, calcula el recorte en píxeles para la resolución fuente definida en `MINIDVR_RESOLUTION` y lo aplica con `-vf crop`.
+- El evento de inicio incluye el ROI y la región recortada (`x`, `y`, `width`, `height`) para trazabilidad vía WebSocket o `/status`.
+- Variables de entorno relevantes:
+  - `MINIDVR_CROP_ENCODER` (por defecto `libx264`).
+  - `MINIDVR_CROP_PRESET` (por defecto `veryfast`).
+  - `MINIDVR_CROP_CRF` (por defecto `20`).
+  - `MINIDVR_CROP_PIX_FMT` (por defecto `yuv420p`).
+  Ajusta estos valores si utilizas aceleración por hardware u otro códec.
 
 ## Troubleshooting
 
 - **Sin imagen en la vista previa:** verifica `journalctl -u mini-dvr.service` y confirma que `ustreamer` detecte la cámara (`v4l2-ctl --list-formats-ext`).
 - **Grabación no inicia:** inspecciona permisos de escritura en `~/recordings` y que la URL de `MINIDVR_STREAM_URL` sea accesible desde la Raspberry.
-- **Latencia alta:** revisa la red local y confirma que no haya transcodificación (el comando FFmpeg usa `-c copy`).
+- **Latencia alta:** revisa la red local y confirma que no haya recortes innecesarios; si el ROI cubre todo el cuadro FFmpeg usa `-c copy`, de lo contrario se transcodifica con `libx264`.
 
 ## Licencia
 

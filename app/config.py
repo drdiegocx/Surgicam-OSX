@@ -27,6 +27,13 @@ class Settings:
         f"http://127.0.0.1:{USTREAMER_PORT}/stream",
     )
 
+    FFMPEG_CROP_ENCODER: str = os.getenv("MINIDVR_CROP_ENCODER", "libx264")
+    FFMPEG_CROP_PRESET: str = os.getenv("MINIDVR_CROP_PRESET", "veryfast")
+    FFMPEG_CROP_CRF: int = int(os.getenv("MINIDVR_CROP_CRF", "20"))
+    FFMPEG_CROP_PIXEL_FORMAT: str = os.getenv(
+        "MINIDVR_CROP_PIX_FMT", "yuv420p"
+    )
+
     LOG_LEVEL: str = os.getenv("MINIDVR_LOG_LEVEL", "INFO")
 
     CONTROLS_CACHE_TTL: float = float(

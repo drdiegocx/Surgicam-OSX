@@ -8,11 +8,57 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional, Set, Tuple
 
 from .config import settings
 
 logger = logging.getLogger("mini_dvr")
+
+
+@dataclass
+class Roi:
+    """Representación normalizada de un recorte ROI."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+    zoom: float = 1.0
+
+    @classmethod
+    def from_payload(cls, payload: Dict[str, Any]) -> "Roi":
+        try:
+            raw_x = float(payload.get("x", 0.0))
+            raw_y = float(payload.get("y", 0.0))
+            raw_width = float(payload.get("width", 1.0))
+            raw_height = float(payload.get("height", 1.0))
+            raw_zoom = float(payload.get("zoom", 1.0))
+        except (TypeError, ValueError) as exc:  # noqa: BLE001
+            raise ValueError("Valores de ROI inválidos") from exc
+
+        width = max(0.01, min(1.0, raw_width))
+        height = max(0.01, min(1.0, raw_height))
+        x = max(0.0, min(raw_x, 1.0 - width))
+        y = max(0.0, min(raw_y, 1.0 - height))
+        zoom = max(1.0, raw_zoom)
+        return cls(x=x, y=y, width=width, height=height, zoom=zoom)
+
+    def is_full_frame(self) -> bool:
+        return (
+            abs(self.x) < 1e-3
+            and abs(self.y) < 1e-3
+            and abs(self.width - 1.0) < 1e-3
+            and abs(self.height - 1.0) < 1e-3
+        )
+
+    def as_dict(self) -> Dict[str, float]:
+        return {
+            "x": round(self.x, 4),
+            "y": round(self.y, 4),
+            "width": round(self.width, 4),
+            "height": round(self.height, 4),
+            "zoom": round(self.zoom, 4),
+        }
 
 
 @dataclass
@@ -21,6 +67,7 @@ class ProcessInfo:
 
     start_time: datetime
     first_segment: str
+    roi: Optional[Roi] = None
 
 
 class EventBroker:
@@ -60,6 +107,9 @@ class RecorderManager:
         self._stop_requested: bool = False
         self._lock = asyncio.Lock()
         self.events = EventBroker()
+        self._source_resolution: Tuple[int, int] = self._parse_resolution(
+            settings.USTREAMER_RESOLUTION
+        )
 
     @property
     def is_preview_running(self) -> bool:
@@ -70,6 +120,10 @@ class RecorderManager:
     @property
     def is_recording(self) -> bool:
         return bool(self._ffmpeg_process and self._ffmpeg_process.poll() is None)
+
+    @property
+    def source_resolution(self) -> Tuple[int, int]:
+        return self._source_resolution
 
     async def ensure_preview(self) -> None:
         if self.is_preview_running:
@@ -102,36 +156,100 @@ class RecorderManager:
             logger.error("Error al iniciar uStreamer: %s", exc)
             raise
 
-    async def start_recording(self) -> Dict[str, Any]:
-        async with self._lock:
-            if self.is_recording:
-                logger.warning("Se solicitó iniciar grabación, pero ya está activa.")
-                return {
-                    "status": "recording",
-                    "file": self._ffmpeg_info.first_segment if self._ffmpeg_info else "",
-                }
-            await self.ensure_preview()
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            first_segment = f"{timestamp}.mp4"
-            segment_pattern = str(self.recordings_dir / "%Y%m%d_%H%M%S.mp4")
-            command = [
-                "ffmpeg",
-                "-loglevel",
-                "info",
-                "-fflags",
-                "nobuffer",
-                "-flags",
-                "low_delay",
-                "-tcp_nodelay",
-                "1",
-                "-f",
-                "mpjpeg",
-                "-i",
-                settings.FFMPG_URL,
-                "-map",
-                "0:v",
-                "-c",
-                "copy",
+    @staticmethod
+    def _parse_resolution(resolution: str) -> Tuple[int, int]:
+        try:
+            width_str, height_str = resolution.lower().split("x", maxsplit=1)
+            width = int(width_str)
+            height = int(height_str)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Resolución '%s' inválida, usando 1280x720 por defecto.",
+                resolution,
+            )
+            return (1280, 720)
+        if width <= 0 or height <= 0:
+            logger.warning(
+                "Resolución '%s' con dimensiones no positivas, usando 1280x720.",
+                resolution,
+            )
+            return (1280, 720)
+        return (width, height)
+
+    @staticmethod
+    def _even(value: int) -> int:
+        if value % 2 == 0:
+            return value
+        if value > 1:
+            return value - 1
+        return value + 1
+
+    def _compute_crop_box(self, roi: Roi) -> Tuple[int, int, int, int]:
+        source_width, source_height = self._source_resolution
+        crop_width = min(source_width, max(16, round(source_width * roi.width)))
+        crop_height = min(source_height, max(16, round(source_height * roi.height)))
+        crop_width = self._even(crop_width)
+        crop_height = self._even(crop_height)
+
+        max_x = max(0, source_width - crop_width)
+        max_y = max(0, source_height - crop_height)
+        crop_x = min(max(0, round(source_width * roi.x)), max_x)
+        crop_y = min(max(0, round(source_height * roi.y)), max_y)
+        crop_x = min(max_x, self._even(crop_x))
+        crop_y = min(max_y, self._even(crop_y))
+
+        return crop_x, crop_y, crop_width, crop_height
+
+    def _build_ffmpeg_command(
+        self, segment_pattern: str, roi: Optional[Roi]
+    ) -> Tuple[list[str], Optional[Tuple[int, int, int, int]]]:
+        command = [
+            "ffmpeg",
+            "-loglevel",
+            "info",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-tcp_nodelay",
+            "1",
+            "-f",
+            "mpjpeg",
+            "-i",
+            settings.FFMPG_URL,
+            "-map",
+            "0:v",
+        ]
+
+        filters = []
+        crop_box: Optional[Tuple[int, int, int, int]] = None
+        if roi and not roi.is_full_frame():
+            crop_box = self._compute_crop_box(roi)
+            x, y, width, height = crop_box
+            filters.append(f"crop={width}:{height}:{x}:{y}")
+
+        if filters:
+            command.extend(["-vf", ",".join(filters)])
+            encoder = settings.FFMPEG_CROP_ENCODER or "libx264"
+            command.extend(["-c:v", encoder])
+            preset = settings.FFMPEG_CROP_PRESET
+            pixel_format = settings.FFMPEG_CROP_PIXEL_FORMAT
+            if encoder == "libx264":
+                if preset:
+                    command.extend(["-preset", preset])
+                command.extend(["-crf", str(settings.FFMPEG_CROP_CRF)])
+                if pixel_format:
+                    command.extend(["-pix_fmt", pixel_format])
+            else:
+                if preset:
+                    command.extend(["-preset", preset])
+                if pixel_format:
+                    command.extend(["-pix_fmt", pixel_format])
+        else:
+            command.extend(["-c", "copy"])
+
+        command.extend(
+            [
                 "-f",
                 "segment",
                 "-segment_time",
@@ -146,6 +264,29 @@ class RecorderManager:
                 "1",
                 segment_pattern,
             ]
+        )
+        return command, crop_box
+
+    async def start_recording(self, roi: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        async with self._lock:
+            if self.is_recording:
+                logger.warning("Se solicitó iniciar grabación, pero ya está activa.")
+                return {
+                    "status": "recording",
+                    "file": self._ffmpeg_info.first_segment if self._ffmpeg_info else "",
+                }
+            await self.ensure_preview()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            first_segment = f"{timestamp}.mp4"
+            segment_pattern = str(self.recordings_dir / "%Y%m%d_%H%M%S.mp4")
+            roi_obj: Optional[Roi] = None
+            if roi is not None:
+                try:
+                    roi_obj = Roi.from_payload(roi)
+                except ValueError as exc:
+                    logger.error("ROI inválido recibido: %s", exc)
+                    raise
+            command, crop_box = self._build_ffmpeg_command(segment_pattern, roi_obj)
             logger.info("Iniciando grabación con comando: %s", " ".join(command))
             self._stop_requested = False
             try:
@@ -163,10 +304,20 @@ class RecorderManager:
             self._ffmpeg_info = ProcessInfo(
                 start_time=datetime.now(),
                 first_segment=first_segment,
+                roi=roi_obj,
             )
             self._ffmpeg_monitor = asyncio.create_task(self._monitor_ffmpeg())
 
-        event = {"status": "recording", "file": first_segment}
+        event: Dict[str, Any] = {"status": "recording", "file": first_segment}
+        if roi_obj:
+            event["roi"] = roi_obj.as_dict()
+            if crop_box:
+                event["crop"] = {
+                    "x": crop_box[0],
+                    "y": crop_box[1],
+                    "width": crop_box[2],
+                    "height": crop_box[3],
+                }
         await self.events.broadcast(event)
         return event
 
@@ -246,4 +397,6 @@ class RecorderManager:
         if self._ffmpeg_info:
             info["current_file"] = self._ffmpeg_info.first_segment
             info["recording_started_at"] = self._ffmpeg_info.start_time.isoformat()
+            if self._ffmpeg_info.roi:
+                info["roi"] = self._ffmpeg_info.roi.as_dict()
         return info
