@@ -7,9 +7,12 @@ import time
 from dataclasses import dataclass
 from typing import AsyncIterator, List, Optional
 
+import gi
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+
+gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 
 logging.basicConfig(level=logging.INFO)
@@ -100,19 +103,23 @@ class CameraController:
         ):
             self._pipeline.add(element)
 
-        if not Gst.Element.link_many(src, capsfilter, self._tee):
+        if not src.link(capsfilter):
             raise RuntimeError("Failed to link camera source")
+        if not capsfilter.link(self._tee):
+            raise RuntimeError("Failed to link capsfilter to tee")
 
-        if not Gst.Element.link_many(
-            queue_preview,
-            jpegdec,
-            videoscale,
-            videoconvert,
-            preview_caps,
-            jpegenc,
-            self._preview_sink,
-        ):
-            raise RuntimeError("Failed to link preview branch")
+        if not queue_preview.link(jpegdec):
+            raise RuntimeError("Failed to link preview queue")
+        if not jpegdec.link(videoscale):
+            raise RuntimeError("Failed to link jpegdec to videoscale")
+        if not videoscale.link(videoconvert):
+            raise RuntimeError("Failed to link videoscale to videoconvert")
+        if not videoconvert.link(preview_caps):
+            raise RuntimeError("Failed to link videoconvert to capsfilter")
+        if not preview_caps.link(jpegenc):
+            raise RuntimeError("Failed to link preview caps to encoder")
+        if not jpegenc.link(self._preview_sink):
+            raise RuntimeError("Failed to link preview encoder to sink")
 
         tee_pad = self._tee.get_request_pad("src_%u")
         queue_pad = queue_preview.get_static_pad("sink")
@@ -206,8 +213,12 @@ class CameraController:
         for element in (queue, jpegparse, mux, filesink):
             self._pipeline.add(element)
 
-        if not Gst.Element.link_many(queue, jpegparse, mux, filesink):
-            raise RuntimeError("Failed to link recording elements")
+        if not queue.link(jpegparse):
+            raise RuntimeError("Failed to link queue to jpegparse")
+        if not jpegparse.link(mux):
+            raise RuntimeError("Failed to link jpegparse to mux")
+        if not mux.link(filesink):
+            raise RuntimeError("Failed to link mux to filesink")
 
         tee_pad = self._tee.get_request_pad("src_%u")
         queue_pad = queue.get_static_pad("sink")
