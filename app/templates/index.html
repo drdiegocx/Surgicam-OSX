@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SurgiCam - Vista previa</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>SurgiCam - Control de cámara</h1>
+    </header>
+    <main>
+      <section class="preview">
+        <img id="preview-stream" alt="Vista previa en vivo" />
+        <div class="status" id="status-message">Conectando...</div>
+      </section>
+      <section class="controls">
+        <button id="start-recording" disabled>Comenzar grabación</button>
+        <button id="stop-recording" disabled>Detener grabación</button>
+        <div class="recording-info" id="recording-info"></div>
+        <ul id="events"></ul>
+      </section>
+    </main>
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
