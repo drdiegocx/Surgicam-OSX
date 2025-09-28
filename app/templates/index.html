@@ -58,133 +58,137 @@
       <div class="app-layout">
         <section class="preview-panel">
           <div class="card preview-card border-0 shadow-sm h-100">
-            <div class="card-body p-0">
-              <div class="preview-frame ratio ratio-16x9" id="previewFrame">
-                <div class="preview-status-bar" aria-live="polite">
-                  <div class="status-pill">
-                    <span class="status-label">Vista previa</span>
-                    <span id="previewState" class="status-value badge rounded-pill">-</span>
+            <div class="card-body">
+              <div class="preview-stage">
+                <div class="preview-scene">
+                  <div class="preview-status-bar" aria-live="polite">
+                    <div class="status-pill">
+                      <span class="status-label">Vista previa</span>
+                      <span id="previewState" class="status-value badge rounded-pill">-</span>
+                    </div>
+                    <div class="status-pill">
+                      <span class="status-label">Grabación</span>
+                      <span id="recordState" class="status-value badge rounded-pill">-</span>
+                    </div>
+                    <div class="status-meta">
+                      <p id="fileInfo" class="status-meta-text small mb-0"></p>
+                      <p id="alerts" class="status-alert small mb-0"></p>
+                    </div>
                   </div>
-                  <div class="status-pill">
-                    <span class="status-label">Grabación</span>
-                    <span id="recordState" class="status-value badge rounded-pill">-</span>
+                  <div class="preview-canvas" id="previewFrame">
+                    <div class="preview-viewport" id="previewViewport">
+                      <img id="preview" src="" alt="Vista previa en vivo" class="preview-image" />
+                      <div class="preview-watermark" aria-hidden="true">SURGICAM</div>
+                    </div>
                   </div>
-                  <div class="status-meta">
-                    <p id="fileInfo" class="status-meta-text small mb-0"></p>
-                    <p id="alerts" class="status-alert small mb-0"></p>
-                  </div>
-                </div>
-                <div class="preview-viewport" id="previewViewport">
-                  <img id="preview" src="" alt="Vista previa en vivo" class="preview-image" />
-                  <div class="preview-watermark" aria-hidden="true">SURGICAM</div>
-                </div>
-                <div class="preview-toolbar" role="group" aria-label="Acciones principales">
-                  <button
-                    id="startBtn"
-                    class="btn btn-primary btn-action"
-                    type="button"
-                    aria-label="Iniciar grabación"
-                  >
-                    <i class="bi bi-record-circle" aria-hidden="true"></i>
-                    <span class="btn-label">Grabar</span>
-                  </button>
-                  <button
-                    id="stopBtn"
-                    class="btn btn-outline-light btn-action"
-                    type="button"
-                    aria-label="Detener grabación"
-                    disabled
-                  >
-                    <i class="bi bi-stop-circle" aria-hidden="true"></i>
-                    <span class="btn-label">Detener</span>
-                  </button>
-                  <button
-                    id="snapshotBtn"
-                    class="btn btn-outline-primary btn-action"
-                    type="button"
-                    aria-label="Capturar fotografía"
-                  >
-                    <i class="bi bi-camera" aria-hidden="true"></i>
-                    <span class="btn-label">Foto</span>
-                  </button>
-                  <button
-                    class="btn btn-outline-secondary btn-action"
-                    type="button"
-                    data-bs-toggle="offcanvas"
-                    data-bs-target="#controlsDrawer"
-                    aria-controls="controlsDrawer"
-                    aria-label="Abrir controles de cámara"
-                  >
-                    <i class="bi bi-sliders" aria-hidden="true"></i>
-                    <span class="btn-label">Controles</span>
-                  </button>
-                </div>
-                <div class="roi-overlay">
-                  <div class="roi-mini-map" id="roiMiniMap">
-                    <img id="roiMiniMapImg" src="" alt="Mapa de vista" class="roi-mini-map-img" />
-                    <div class="roi-indicator" id="roiIndicator"></div>
-                  </div>
-                  <div class="roi-controls" id="roiControls">
-                    <div class="roi-controls-body">
-                      <div class="d-flex align-items-center justify-content-between mb-2">
-                        <span class="label text-uppercase">Zoom</span>
-                        <span class="value" id="zoomValue">1.0x</span>
-                      </div>
-                      <input
-                        type="range"
-                        class="form-range"
-                        id="zoomSlider"
-                        min="100"
-                        max="400"
-                        step="10"
-                        value="100"
-                        aria-label="Zoom digital"
-                      />
-                      <div class="roi-pan-grid mt-2">
-                        <button
-                          type="button"
-                          class="btn btn-outline-light btn-sm"
-                          data-pan="up"
-                          aria-label="Desplazar arriba"
-                        >
-                          ↑
-                        </button>
-                        <div class="roi-pan-row">
+                  <aside class="preview-side">
+                    <div class="roi-mini-map" id="roiMiniMap">
+                      <img id="roiMiniMapImg" src="" alt="Mapa de vista" class="roi-mini-map-img" />
+                      <div class="roi-indicator" id="roiIndicator"></div>
+                    </div>
+                    <div class="roi-controls" id="roiControls">
+                      <div class="roi-controls-body">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                          <span class="label text-uppercase">Zoom</span>
+                          <span class="value" id="zoomValue">1.0x</span>
+                        </div>
+                        <input
+                          type="range"
+                          class="form-range"
+                          id="zoomSlider"
+                          min="100"
+                          max="400"
+                          step="10"
+                          value="100"
+                          aria-label="Zoom digital"
+                        />
+                        <div class="roi-pan-grid mt-2">
                           <button
                             type="button"
                             class="btn btn-outline-light btn-sm"
-                            data-pan="left"
-                            aria-label="Desplazar izquierda"
+                            data-pan="up"
+                            aria-label="Desplazar arriba"
                           >
-                            ←
+                            ↑
                           </button>
+                          <div class="roi-pan-row">
+                            <button
+                              type="button"
+                              class="btn btn-outline-light btn-sm"
+                              data-pan="left"
+                              aria-label="Desplazar izquierda"
+                            >
+                              ←
+                            </button>
+                            <button
+                              type="button"
+                              class="btn btn-outline-light btn-sm"
+                              data-pan="center"
+                              aria-label="Centrar"
+                            >
+                              •
+                            </button>
+                            <button
+                              type="button"
+                              class="btn btn-outline-light btn-sm"
+                              data-pan="right"
+                              aria-label="Desplazar derecha"
+                            >
+                              →
+                            </button>
+                          </div>
                           <button
                             type="button"
                             class="btn btn-outline-light btn-sm"
-                            data-pan="center"
-                            aria-label="Centrar"
+                            data-pan="down"
+                            aria-label="Desplazar abajo"
                           >
-                            •
-                          </button>
-                          <button
-                            type="button"
-                            class="btn btn-outline-light btn-sm"
-                            data-pan="right"
-                            aria-label="Desplazar derecha"
-                          >
-                            →
+                            ↓
                           </button>
                         </div>
-                        <button
-                          type="button"
-                          class="btn btn-outline-light btn-sm"
-                          data-pan="down"
-                          aria-label="Desplazar abajo"
-                        >
-                          ↓
-                        </button>
                       </div>
                     </div>
+                  </aside>
+                  <div class="preview-toolbar" role="group" aria-label="Acciones principales">
+                    <button
+                      id="startBtn"
+                      class="btn btn-primary btn-action"
+                      type="button"
+                      aria-label="Iniciar grabación"
+                    >
+                      <i class="bi bi-record-circle" aria-hidden="true"></i>
+                      <span class="btn-label">Grabar</span>
+                    </button>
+                    <button
+                      id="stopBtn"
+                      class="btn btn-outline-light btn-action"
+                      type="button"
+                      aria-label="Detener grabación"
+                      disabled
+                    >
+                      <i class="bi bi-stop-circle" aria-hidden="true"></i>
+                      <span class="btn-label">Detener</span>
+                    </button>
+                    <button
+                      id="snapshotBtn"
+                      class="btn btn-outline-primary btn-action"
+                      type="button"
+                      aria-label="Capturar fotografía"
+                    >
+                      <i class="bi bi-camera" aria-hidden="true"></i>
+                      <span class="btn-label">Foto</span>
+                    </button>
+                    <button
+                      class="btn btn-outline-secondary btn-action"
+                      type="button"
+                      data-bs-toggle="offcanvas"
+                      data-bs-target="#controlsDrawer"
+                      aria-controls="controlsDrawer"
+                      aria-label="Abrir controles de cámara"
+                    >
+                      <i class="bi bi-sliders" aria-hidden="true"></i>
+                      <span class="btn-label">Controles</span>
+                    </button>
                   </div>
                 </div>
               </div>
