@@ -18,6 +18,8 @@
 
   const controlElements = new Map();
   let isLoadingControls = false;
+  let controlsLoaded = false;
+  let controlsMessageTimer;
 
   const protocol = window.location.protocol === 'https:' ? 'https://' : 'http://';
   const streamUrl = `${protocol}${window.location.hostname}:${previewPort}/stream`;
@@ -120,16 +122,33 @@
     };
   }
 
-  function showControlsError(message) {
+  function showControlsMessage(message, variant = 'danger') {
     if (!controlsAlert) {
       return;
     }
+
+    if (controlsMessageTimer) {
+      clearTimeout(controlsMessageTimer);
+      controlsMessageTimer = undefined;
+    }
+
+    controlsAlert.textContent = '';
+    controlsAlert.className = 'alert d-none';
+
     if (!message) {
-      controlsAlert.textContent = '';
-      controlsAlert.classList.add('d-none');
-    } else {
-      controlsAlert.textContent = message;
-      controlsAlert.classList.remove('d-none');
+      return;
+    }
+
+    const supported = new Set(['success', 'danger', 'warning', 'info']);
+    const selected = supported.has(variant) ? variant : 'danger';
+    controlsAlert.classList.add(`alert-${selected}`);
+    controlsAlert.classList.remove('d-none');
+    controlsAlert.textContent = message;
+
+    if (selected === 'success') {
+      controlsMessageTimer = setTimeout(function () {
+        showControlsMessage('');
+      }, 4000);
     }
   }
 
@@ -216,6 +235,7 @@
     entry.isDefault = isAtDefault(control);
     entry.busy = false;
     updateDefaultButtonState(entry);
+    entry.name = control.name;
     controlElements.set(control.id, entry);
   }
 
@@ -538,12 +558,15 @@
     }
   }
 
-  async function loadControls() {
+  async function loadControls(force = false) {
     if (isLoadingControls) {
       return;
     }
+    if (!force && controlsLoaded) {
+      return;
+    }
     isLoadingControls = true;
-    showControlsError('');
+    showControlsMessage('');
     setControlsLoading(true);
     showControlsContent(false);
     try {
@@ -556,9 +579,10 @@
       const data = await response.json();
       const controls = Array.isArray(data.controls) ? data.controls : [];
       buildControls(controls);
+      controlsLoaded = true;
     } catch (error) {
       console.error('No se pudieron cargar los controles V4L2', error);
-      showControlsError(error.message || 'No se pudieron cargar los controles.');
+      showControlsMessage(error.message || 'No se pudieron cargar los controles.', 'danger');
     } finally {
       setControlsLoading(false);
       isLoadingControls = false;
@@ -567,7 +591,7 @@
 
   async function sendControlUpdate(controlId, payload) {
     setControlBusy(controlId, true);
-    showControlsError('');
+    showControlsMessage('');
     try {
       const response = await fetch(`/api/controls/${controlId}`, {
         method: 'POST',
@@ -582,11 +606,14 @@
       const data = await response.json();
       if (data && data.control) {
         updateControlUI(data.control);
+        const entry = controlElements.get(controlId);
+        const controlName = entry && entry.name ? `"${entry.name}"` : 'el control';
+        showControlsMessage(`Se aplicó ${controlName}.`, 'success');
       }
     } catch (error) {
       console.error('Error actualizando control', error);
-      showControlsError(error.message || 'Ocurrió un error al aplicar el cambio.');
-      await loadControls();
+      showControlsMessage(error.message || 'Ocurrió un error al aplicar el cambio.', 'danger');
+      await loadControls(true);
     } finally {
       setControlBusy(controlId, false);
     }
@@ -606,7 +633,7 @@
 
   if (controlsDrawer) {
     controlsDrawer.addEventListener('show.bs.offcanvas', function () {
-      loadControls();
+      loadControls(true);
     });
   }
 
@@ -620,4 +647,5 @@
   });
 
   connect();
+  loadControls();
 })();

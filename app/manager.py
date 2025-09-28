@@ -81,6 +81,7 @@ class RecorderManager:
             "--encoder=HW",
             f"--resolution={settings.USTREAMER_RESOLUTION}",
             f"--desired-fps={settings.USTREAMER_FPS}",
+            "--allow-origin=*",
             "--host",
             settings.USTREAMER_HOST,
             "--port",
