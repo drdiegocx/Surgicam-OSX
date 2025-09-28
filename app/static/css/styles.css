@@ -26,3 +26,85 @@ img#preview {
 .badge.bg-secondary {
   background-color: #6c757d !important;
 }
+
+.btn-outline-light {
+  border-color: rgba(248, 249, 250, 0.5);
+}
+
+.btn-outline-light:hover,
+.btn-outline-light:focus {
+  border-color: rgba(248, 249, 250, 0.75);
+  background-color: rgba(248, 249, 250, 0.15);
+  color: #f8f9fa;
+}
+
+.offcanvas.text-bg-dark {
+  background-color: rgba(11, 17, 25, 0.95);
+}
+
+#controlsTabNav .nav-link {
+  color: rgba(248, 249, 250, 0.8);
+}
+
+#controlsTabNav .nav-link.active {
+  color: #0b1620;
+  background-color: #f8f9fa;
+  font-weight: 600;
+}
+
+#controlsTabContent {
+  background-color: rgba(8, 13, 20, 0.85);
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.control-card {
+  background-color: rgba(17, 25, 34, 0.92);
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+  position: relative;
+}
+
+.control-card:hover {
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.35);
+}
+
+.control-card .badge {
+  font-size: 0.7rem;
+  background-color: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.control-card.control-updating {
+  opacity: 0.6;
+}
+
+.control-card.control-updating::after {
+  content: 'Aplicando…';
+  position: absolute;
+  top: 0.75rem;
+  right: 1rem;
+  font-size: 0.75rem;
+  color: rgba(248, 249, 250, 0.7);
+}
+
+.control-card.control-updating .spinner-border {
+  width: 1rem;
+  height: 1rem;
+}
+
+.control-card .form-range::-webkit-slider-thumb {
+  background-color: #0d6efd;
+}
+
+.control-card .form-range::-moz-range-thumb {
+  background-color: #0d6efd;
+}
+
+.control-card .form-range::-webkit-slider-runnable-track {
+  background-color: rgba(255, 255, 255, 0.25);
+}
+
+.control-card .form-range::-moz-range-track {
+  background-color: rgba(255, 255, 255, 0.25);
+}

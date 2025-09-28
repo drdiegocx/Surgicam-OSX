@@ -9,6 +9,16 @@
   const fileInfo = document.getElementById('fileInfo');
   const alerts = document.getElementById('alerts');
 
+  const controlsDrawer = document.getElementById('controlsDrawer');
+  const controlsLoading = document.getElementById('controlsLoading');
+  const controlsContent = document.getElementById('controlsContent');
+  const controlsAlert = document.getElementById('controlsAlert');
+  const controlsTabNav = document.getElementById('controlsTabNav');
+  const controlsTabContent = document.getElementById('controlsTabContent');
+
+  const controlElements = new Map();
+  let isLoadingControls = false;
+
   const protocol = window.location.protocol === 'https:' ? 'https://' : 'http://';
   const streamUrl = `${protocol}${window.location.hostname}:${previewPort}/stream`;
   previewImg.src = streamUrl;
@@ -110,6 +120,478 @@
     };
   }
 
+  function showControlsError(message) {
+    if (!controlsAlert) {
+      return;
+    }
+    if (!message) {
+      controlsAlert.textContent = '';
+      controlsAlert.classList.add('d-none');
+    } else {
+      controlsAlert.textContent = message;
+      controlsAlert.classList.remove('d-none');
+    }
+  }
+
+  function setControlsLoading(state) {
+    if (controlsLoading) {
+      controlsLoading.classList.toggle('d-none', !state);
+    }
+  }
+
+  function showControlsContent(state) {
+    if (controlsContent) {
+      controlsContent.classList.toggle('d-none', !state);
+    }
+  }
+
+  function formatValue(value, type) {
+    if (value === null || value === undefined) {
+      return '-';
+    }
+    const normalizedType = (type || '').toLowerCase();
+    if (normalizedType === 'bool' || normalizedType === 'boolean') {
+      const boolValue = value === true || value === 1 || value === '1';
+      return boolValue ? 'Activado' : 'Desactivado';
+    }
+    if (typeof value === 'number') {
+      if (Number.isInteger(value)) {
+        return String(value);
+      }
+      return Number(value).toFixed(2).replace(/\.00$/, '').replace(/\.0$/, '');
+    }
+    return String(value);
+  }
+
+  function toComparable(value, type) {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    const normalizedType = (type || '').toLowerCase();
+    if (normalizedType === 'bool' || normalizedType === 'boolean') {
+      if (typeof value === 'boolean') {
+        return value;
+      }
+      if (typeof value === 'number') {
+        return value !== 0;
+      }
+      const lowered = String(value).trim().toLowerCase();
+      return lowered === '1' || lowered === 'true' || lowered === 'si' || lowered === 'sí';
+    }
+    if (
+      normalizedType === 'menu' ||
+      normalizedType === 'intmenu' ||
+      normalizedType === 'integer_menu' ||
+      normalizedType === 'integer menu' ||
+      normalizedType === 'int' ||
+      normalizedType === 'integer' ||
+      normalizedType === 'int64'
+    ) {
+      return Number(value);
+    }
+    if (normalizedType === 'float' || normalizedType === 'double') {
+      return Number(value);
+    }
+    return value;
+  }
+
+  function isAtDefault(control) {
+    if (control.default === null || control.default === undefined) {
+      return false;
+    }
+    return toComparable(control.value, control.type) === toComparable(control.default, control.type);
+  }
+
+  function updateDefaultButtonState(entry) {
+    if (!entry || !entry.defaultButton) {
+      return;
+    }
+    const shouldDisable = entry.busy || !entry.hasDefault || entry.isDefault;
+    entry.defaultButton.disabled = shouldDisable;
+  }
+
+  function registerControl(control, entry) {
+    entry.controlType = control.type;
+    entry.hasDefault = control.default !== null && control.default !== undefined;
+    entry.isDefault = isAtDefault(control);
+    entry.busy = false;
+    updateDefaultButtonState(entry);
+    controlElements.set(control.id, entry);
+  }
+
+  function updateControlUI(control) {
+    const entry = controlElements.get(control.id);
+    if (!entry) {
+      return;
+    }
+    entry.hasDefault = control.default !== null && control.default !== undefined;
+    entry.isDefault = isAtDefault(control);
+    if (entry.valueElement) {
+      entry.valueElement.textContent = formatValue(control.value, control.type);
+    }
+    if (entry.minElement) {
+      entry.minElement.textContent = formatValue(control.min, control.type);
+    }
+    if (entry.maxElement) {
+      entry.maxElement.textContent = formatValue(control.max, control.type);
+    }
+    if (entry.defaultElement) {
+      entry.defaultElement.textContent = formatValue(control.default, control.type);
+    }
+    if (entry.input && entry.inputType === 'range') {
+      const numericValue = Number(control.value ?? control.default ?? control.min ?? 0);
+      entry.input.value = numericValue;
+    }
+    if (entry.input && entry.inputType === 'select') {
+      const value = control.value ?? control.default;
+      entry.input.value = value !== undefined && value !== null ? String(value) : '';
+    }
+    if (entry.input && entry.inputType === 'toggle') {
+      const current = toComparable(control.value, control.type);
+      entry.input.checked = Boolean(current);
+    }
+    entry.wrapper.dataset.value = control.value;
+    entry.wrapper.dataset.default = control.default;
+    entry.wrapper.dataset.min = control.min;
+    entry.wrapper.dataset.max = control.max;
+    updateDefaultButtonState(entry);
+  }
+
+  function setControlBusy(controlId, busy) {
+    const entry = controlElements.get(controlId);
+    if (!entry) {
+      return;
+    }
+    entry.busy = busy;
+    if (entry.input) {
+      entry.input.disabled = busy;
+    }
+    if (entry.wrapper) {
+      entry.wrapper.classList.toggle('control-updating', busy);
+    }
+    updateDefaultButtonState(entry);
+  }
+
+  function buildMetadataRow(control) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'small text-muted mt-3';
+
+    const valueLabel = document.createElement('span');
+    valueLabel.innerHTML = 'Valor actual: ';
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'fw-semibold';
+    valueSpan.textContent = formatValue(control.value, control.type);
+    valueLabel.appendChild(valueSpan);
+    wrapper.appendChild(valueLabel);
+
+    const minSpan = document.createElement('span');
+    minSpan.className = 'ms-3';
+    minSpan.innerHTML = 'Mínimo: ';
+    const minValue = document.createElement('span');
+    minValue.textContent = formatValue(control.min, control.type);
+    minSpan.appendChild(minValue);
+    wrapper.appendChild(minSpan);
+
+    const maxSpan = document.createElement('span');
+    maxSpan.className = 'ms-3';
+    maxSpan.innerHTML = 'Máximo: ';
+    const maxValue = document.createElement('span');
+    maxValue.textContent = formatValue(control.max, control.type);
+    maxSpan.appendChild(maxValue);
+    wrapper.appendChild(maxSpan);
+
+    const defaultSpan = document.createElement('span');
+    defaultSpan.className = 'ms-3';
+    defaultSpan.innerHTML = 'Predeterminado: ';
+    const defaultValue = document.createElement('span');
+    defaultValue.textContent = formatValue(control.default, control.type);
+    defaultSpan.appendChild(defaultValue);
+    wrapper.appendChild(defaultSpan);
+
+    return {
+      wrapper,
+      valueElement: valueSpan,
+      minElement: minValue,
+      maxElement: maxValue,
+      defaultElement: defaultValue,
+    };
+  }
+
+  function createControlElement(control) {
+    const card = document.createElement('div');
+    card.className = 'control-card rounded-3 border border-light-subtle bg-dark-subtle p-3 mb-3';
+    card.dataset.controlId = control.id;
+
+    const header = document.createElement('div');
+    header.className = 'd-flex justify-content-between align-items-start gap-3';
+
+    const title = document.createElement('div');
+    title.innerHTML = `<h3 class="h6 mb-1">${control.name}</h3>`;
+    const typeBadge = document.createElement('span');
+    typeBadge.className = 'badge text-bg-secondary';
+    typeBadge.textContent = control.type;
+    title.appendChild(typeBadge);
+    header.appendChild(title);
+
+    const defaultButton = document.createElement('button');
+    defaultButton.type = 'button';
+    defaultButton.className = 'btn btn-outline-light btn-sm';
+    defaultButton.textContent = 'Restablecer';
+    defaultButton.addEventListener('click', function () {
+      sendControlUpdate(control.id, { action: 'default' });
+    });
+    header.appendChild(defaultButton);
+
+    card.appendChild(header);
+
+    let inputElement = null;
+    let inputType = null;
+
+    const metadata = buildMetadataRow(control);
+
+    const normalizedType = (control.type || '').toLowerCase();
+    if (normalizedType === 'bool' || normalizedType === 'boolean') {
+      const formSwitch = document.createElement('div');
+      formSwitch.className = 'form-check form-switch mt-2';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.className = 'form-check-input';
+      input.checked = Boolean(toComparable(control.value, control.type));
+      input.addEventListener('change', function () {
+        sendControlUpdate(control.id, { value: input.checked });
+      });
+      formSwitch.appendChild(input);
+      const label = document.createElement('label');
+      label.className = 'form-check-label';
+      label.textContent = 'Activo';
+      formSwitch.appendChild(label);
+      card.appendChild(formSwitch);
+      inputElement = input;
+      inputType = 'toggle';
+    } else if (
+      normalizedType === 'menu' ||
+      normalizedType === 'intmenu' ||
+      normalizedType === 'integer_menu' ||
+      normalizedType === 'integer menu'
+    ) {
+      const select = document.createElement('select');
+      select.className = 'form-select form-select-sm mt-2';
+      if (Array.isArray(control.options)) {
+        control.options.forEach(function (option) {
+          const opt = document.createElement('option');
+          opt.value = String(option.value);
+          opt.textContent = `${option.value} — ${option.label}`;
+          select.appendChild(opt);
+        });
+      }
+      const currentOption = control.value ?? control.default;
+      if (currentOption !== undefined && currentOption !== null) {
+        select.value = String(currentOption);
+      }
+      if (select.options.length > 0 && select.selectedIndex === -1) {
+        select.selectedIndex = 0;
+      }
+      select.addEventListener('change', function () {
+        const selectedValue = parseInt(select.value, 10);
+        sendControlUpdate(control.id, { value: selectedValue });
+      });
+      card.appendChild(select);
+      inputElement = select;
+      inputType = 'select';
+    } else if (
+      normalizedType === 'int' ||
+      normalizedType === 'integer' ||
+      normalizedType === 'int64' ||
+      normalizedType === 'float' ||
+      normalizedType === 'double'
+    ) {
+      const range = document.createElement('input');
+      range.type = 'range';
+      range.className = 'form-range mt-2';
+      if (control.min !== null && control.min !== undefined) {
+        range.min = control.min;
+      }
+      if (control.max !== null && control.max !== undefined) {
+        range.max = control.max;
+      }
+      const step = control.step !== null && control.step !== undefined ? control.step : 1;
+      range.step = step;
+      const current = Number(control.value ?? control.default ?? control.min ?? 0);
+      range.value = current;
+      range.addEventListener('input', function () {
+        if (metadata.valueElement) {
+          metadata.valueElement.textContent = formatValue(Number(range.value), control.type);
+        }
+      });
+      range.addEventListener('change', function () {
+        const raw = normalizedType === 'float' || normalizedType === 'double'
+          ? parseFloat(range.value)
+          : parseInt(range.value, 10);
+        sendControlUpdate(control.id, { value: raw });
+      });
+      card.appendChild(range);
+      inputElement = range;
+      inputType = 'range';
+    } else if (normalizedType === 'button') {
+      const info = document.createElement('p');
+      info.className = 'text-muted small mt-2';
+      info.textContent = 'Este control solo es accionable desde el dispositivo físico.';
+      card.appendChild(info);
+    } else {
+      const fallback = document.createElement('p');
+      fallback.className = 'text-muted small mt-2';
+      fallback.textContent = 'Este tipo de control no es editable desde la interfaz.';
+      card.appendChild(fallback);
+    }
+
+    card.appendChild(metadata.wrapper);
+
+    registerControl(control, {
+      wrapper: card,
+      input: inputElement,
+      inputType,
+      valueElement: metadata.valueElement,
+      minElement: metadata.minElement,
+      maxElement: metadata.maxElement,
+      defaultElement: metadata.defaultElement,
+      defaultButton,
+    });
+
+    return card;
+  }
+
+  function buildControls(controls) {
+    controlElements.clear();
+    controlsTabNav.innerHTML = '';
+    controlsTabContent.innerHTML = '';
+
+    const categories = new Map();
+    controls.forEach(function (control) {
+      const category = control.category || 'General';
+      if (!categories.has(category)) {
+        categories.set(category, []);
+      }
+      categories.get(category).push(control);
+    });
+
+    const sortedCategories = Array.from(categories.keys()).sort(function (a, b) {
+      return a.localeCompare(b, 'es', { sensitivity: 'base' });
+    });
+
+    if (sortedCategories.length === 0) {
+      controlsTabNav.classList.add('d-none');
+      const empty = document.createElement('div');
+      empty.className = 'text-center text-muted py-5';
+      empty.textContent = 'No se encontraron controles disponibles para este dispositivo.';
+      controlsTabContent.appendChild(empty);
+      showControlsContent(true);
+      return;
+    }
+
+    controlsTabNav.classList.remove('d-none');
+
+    sortedCategories.forEach(function (category, index) {
+      const controlsForCategory = categories.get(category) || [];
+      controlsForCategory.sort(function (a, b) {
+        return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' });
+      });
+
+      const tabId = `controls-${category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${index}`;
+
+      const navItem = document.createElement('li');
+      navItem.className = 'nav-item';
+      const navButton = document.createElement('button');
+      navButton.className = `nav-link${index === 0 ? ' active' : ''}`;
+      navButton.dataset.bsToggle = 'tab';
+      navButton.dataset.bsTarget = `#${tabId}`;
+      navButton.type = 'button';
+      navButton.role = 'tab';
+      navButton.ariaControls = tabId;
+      navButton.ariaSelected = index === 0 ? 'true' : 'false';
+      navButton.textContent = category;
+      navItem.appendChild(navButton);
+      controlsTabNav.appendChild(navItem);
+
+      const tabPane = document.createElement('div');
+      tabPane.className = `tab-pane fade${index === 0 ? ' show active' : ''} p-3`;
+      tabPane.id = tabId;
+      tabPane.role = 'tabpanel';
+
+      controlsForCategory.forEach(function (control) {
+        const card = createControlElement(control);
+        tabPane.appendChild(card);
+      });
+
+      if (controlsForCategory.length === 0) {
+        const emptyCategory = document.createElement('div');
+        emptyCategory.className = 'text-muted text-center py-4';
+        emptyCategory.textContent = 'No hay controles disponibles en esta categoría.';
+        tabPane.appendChild(emptyCategory);
+      }
+
+      controlsTabContent.appendChild(tabPane);
+    });
+
+    showControlsContent(true);
+    if (controlsTabContent) {
+      controlsTabContent.scrollTop = 0;
+    }
+  }
+
+  async function loadControls() {
+    if (isLoadingControls) {
+      return;
+    }
+    isLoadingControls = true;
+    showControlsError('');
+    setControlsLoading(true);
+    showControlsContent(false);
+    try {
+      const response = await fetch('/api/controls');
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        const message = error.detail || 'No se pudo obtener la configuración de cámara.';
+        throw new Error(message);
+      }
+      const data = await response.json();
+      const controls = Array.isArray(data.controls) ? data.controls : [];
+      buildControls(controls);
+    } catch (error) {
+      console.error('No se pudieron cargar los controles V4L2', error);
+      showControlsError(error.message || 'No se pudieron cargar los controles.');
+    } finally {
+      setControlsLoading(false);
+      isLoadingControls = false;
+    }
+  }
+
+  async function sendControlUpdate(controlId, payload) {
+    setControlBusy(controlId, true);
+    showControlsError('');
+    try {
+      const response = await fetch(`/api/controls/${controlId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        const message = error.detail || 'No se pudo actualizar el control.';
+        throw new Error(message);
+      }
+      const data = await response.json();
+      if (data && data.control) {
+        updateControlUI(data.control);
+      }
+    } catch (error) {
+      console.error('Error actualizando control', error);
+      showControlsError(error.message || 'Ocurrió un error al aplicar el cambio.');
+      await loadControls();
+    } finally {
+      setControlBusy(controlId, false);
+    }
+  }
+
   startBtn.addEventListener('click', function () {
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ command: 'start' }));
@@ -121,6 +603,12 @@
       socket.send(JSON.stringify({ command: 'stop' }));
     }
   });
+
+  if (controlsDrawer) {
+    controlsDrawer.addEventListener('show.bs.offcanvas', function () {
+      loadControls();
+    });
+  }
 
   window.addEventListener('beforeunload', function () {
     if (reconnectTimer) {

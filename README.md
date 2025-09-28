@@ -109,6 +109,15 @@ Ajusta la ruta al repositorio según tu despliegue.
 - `GET /health` – Health-check que verifica los procesos de uStreamer y FFmpeg.
 - `GET /status` – Estado actual del sistema y metadatos de la grabación.
 - `WS /ws` – Canal WebSocket para comandos de inicio/detención y notificaciones.
+- `GET /api/controls` – Devuelve los controles V4L2 disponibles, incluyendo rangos, valores y opciones.
+- `POST /api/controls/{id}` – Ajusta o restablece un control específico.
+
+## Panel de ajustes de cámara
+
+- La interfaz incorpora un *drawer* lateral con pestañas por categoría que agrupan los controles reportados por `v4l2-ctl`.
+- Cada control muestra su valor actual, mínimo, máximo y predeterminado, con `slider`, listas desplegables o interruptores según el tipo.
+- El botón **Restablecer** aplica el valor por defecto reportado por el driver sin interrumpir la vista previa ni la grabación en curso.
+- Todos los cambios se envían mediante la API `/api/controls` y se validan en el backend para evitar valores fuera de rango.
 
 ## Operación y métricas
 
