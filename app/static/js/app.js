@@ -52,6 +52,7 @@
   let isLoadingControls = false;
   let controlsLoaded = false;
   let controlsMessageTimer;
+  let reopenGalleryAfterVideo = false;
 
   const viewportRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : 16 / 9;
   if (rootStyle && viewportRatio) {
@@ -253,13 +254,6 @@
       activateWindow(windowEl, shouldFocus);
     });
 
-    const collapseBtn = windowEl.querySelector('[data-window-collapse]');
-    if (collapseBtn) {
-      collapseBtn.addEventListener('click', function (event) {
-        event.preventDefault();
-        toggleWindowCollapse(windowEl);
-      });
-    }
   }
 
   function refreshThemeState(theme) {
@@ -385,13 +379,14 @@
           handled = true;
         }
         break;
-      case 'open-gallery':
-        if (galleryModalEl && window.bootstrap && window.bootstrap.Modal) {
-          const galleryInstance = window.bootstrap.Modal.getOrCreateInstance(galleryModalEl);
+      case 'open-gallery': {
+        const galleryInstance = ensureGalleryModal();
+        if (galleryInstance) {
           galleryInstance.show();
           handled = true;
         }
         break;
+      }
       case 'set-theme':
         if (trigger) {
           const themeName = trigger.dataset.theme;
@@ -490,9 +485,40 @@
     });
   });
 
+  document.addEventListener('click', function (event) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) {
+      return;
+    }
+    const collapseTrigger = target.closest('[data-window-collapse]');
+    if (!collapseTrigger) {
+      return;
+    }
+    const windowEl = collapseTrigger.closest('[data-window]');
+    if (!windowEl) {
+      return;
+    }
+    event.preventDefault();
+    toggleWindowCollapse(windowEl);
+  });
+
   document.addEventListener('keydown', function (event) {
     if (event.defaultPrevented) {
       return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target) {
+        const collapseTrigger = target.closest('[data-window-collapse]');
+        if (collapseTrigger) {
+          const windowEl = collapseTrigger.closest('[data-window]');
+          if (windowEl) {
+            event.preventDefault();
+            toggleWindowCollapse(windowEl);
+            return;
+          }
+        }
+      }
     }
     if (event.key === 'Enter' && !event.repeat) {
       if (isInteractiveElement(event.target)) {
@@ -577,6 +603,7 @@
     : '';
   let snapshotBusy = false;
   let isGalleryLoading = false;
+  let galleryModalInstance;
   let videoModalInstance;
   let currentVideoName = '';
 
@@ -735,6 +762,19 @@
     });
   }
 
+  function ensureGalleryModal() {
+    if (!galleryModalEl || !window.bootstrap || !window.bootstrap.Modal) {
+      return null;
+    }
+    if (!galleryModalInstance) {
+      galleryModalInstance = window.bootstrap.Modal.getOrCreateInstance(galleryModalEl);
+      galleryModalEl.addEventListener('show.bs.modal', function () {
+        reopenGalleryAfterVideo = false;
+      });
+    }
+    return galleryModalInstance;
+  }
+
   function ensureVideoModal() {
     if (!videoModalEl || !window.bootstrap || !window.bootstrap.Modal) {
       return null;
@@ -766,6 +806,13 @@
           videoDownload.removeAttribute('download');
           videoDownload.classList.add('d-none');
         }
+        if (reopenGalleryAfterVideo) {
+          reopenGalleryAfterVideo = false;
+          const galleryInstance = ensureGalleryModal();
+          if (galleryInstance) {
+            galleryInstance.show();
+          }
+        }
       });
     }
     return videoModalInstance;
@@ -785,6 +832,12 @@
     const modal = ensureVideoModal();
     if (!modal || !videoPlayer) {
       return;
+    }
+
+    const galleryInstance = ensureGalleryModal();
+    if (galleryInstance && galleryModalEl && galleryModalEl.classList.contains('show')) {
+      reopenGalleryAfterVideo = true;
+      galleryInstance.hide();
     }
 
     const name = button.dataset.mediaName || 'Reproducción de video';
