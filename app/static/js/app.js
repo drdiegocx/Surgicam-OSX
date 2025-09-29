@@ -30,6 +30,7 @@
   const videoMeta = document.getElementById('videoMeta');
   const videoDownload = document.getElementById('videoDownload');
   const videoTitle = document.getElementById('videoModalLabel');
+  const galleryModalEl = document.getElementById('galleryModal');
 
   const controlsDrawer = document.getElementById('controlsDrawer');
   const controlsLoading = document.getElementById('controlsLoading');
@@ -38,10 +39,33 @@
   const controlsTabNav = document.getElementById('controlsTabNav');
   const controlsTabContent = document.getElementById('controlsTabContent');
 
+  const overlayWindows = document.querySelectorAll('[data-window]');
+  const commandPalette = document.getElementById('commandPalette');
+  const commandSurface = commandPalette ? commandPalette.querySelector('.command-surface') : null;
+  const commandList = commandPalette ? commandPalette.querySelector('[data-command-list]') : null;
+  const commandButtons = document.querySelectorAll('[data-command]');
+  const themeChips = document.querySelectorAll('.theme-chip');
+  const scaleControls = document.querySelectorAll('[data-command="set-scale"]');
+  const rootStyle = document.documentElement.style;
+
   const controlElements = new Map();
   let isLoadingControls = false;
   let controlsLoaded = false;
   let controlsMessageTimer;
+  let reopenGalleryAfterVideo = false;
+
+  const viewportRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : 16 / 9;
+  if (rootStyle && viewportRatio) {
+    rootStyle.setProperty('--viewport-ratio', viewportRatio);
+  }
+
+  const THEME_STORAGE_KEY = 'surgicam:theme';
+  const SCALE_STORAGE_KEY = 'surgicam:viewport-scale';
+  const windowPositions = new WeakMap();
+  let windowZIndex = 4;
+  let activeWindow = null;
+  let isPaletteOpen = false;
+  let lastFocusedElement = null;
 
   const protocol = window.location.protocol === 'https:' ? 'https://' : 'http://';
   const streamUrl = `${protocol}${window.location.hostname}:${previewPort}/stream`;
@@ -79,6 +103,476 @@
   }
 
   startMiniMapTimer();
+
+  function getFromStorage(key) {
+    if (!key) {
+      return null;
+    }
+    try {
+      return window.localStorage.getItem(key);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function setInStorage(key, value) {
+    if (!key) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(key, value);
+    } catch (error) {
+      // Storage may be unavailable; ignore gracefully.
+    }
+  }
+
+  function updateWindowCollapseButton(windowEl, collapsed) {
+    const toggleBtn = windowEl ? windowEl.querySelector('[data-window-collapse]') : null;
+    if (!toggleBtn) {
+      return;
+    }
+    toggleBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    const icon = toggleBtn.querySelector('i');
+    if (icon) {
+      icon.classList.toggle('bi-chevron-down', !collapsed);
+      icon.classList.toggle('bi-chevron-up', collapsed);
+    }
+  }
+
+  function toggleWindowCollapse(windowEl, collapse) {
+    if (!windowEl) {
+      return;
+    }
+    const shouldCollapse =
+      typeof collapse === 'boolean' ? collapse : !windowEl.classList.contains('is-collapsed');
+    windowEl.classList.toggle('is-collapsed', shouldCollapse);
+    updateWindowCollapseButton(windowEl, shouldCollapse);
+  }
+
+  function activateWindow(windowEl, shouldFocus) {
+    if (!windowEl) {
+      return;
+    }
+    overlayWindows.forEach(function (element) {
+      if (element === windowEl) {
+        element.classList.add('is-active');
+      } else {
+        element.classList.remove('is-active');
+      }
+    });
+    windowZIndex += 1;
+    windowEl.style.setProperty('--window-layer', windowZIndex);
+    activeWindow = windowEl;
+    if (!windowEl.hasAttribute('tabindex')) {
+      windowEl.setAttribute('tabindex', '-1');
+    }
+    if (shouldFocus !== false) {
+      try {
+        windowEl.focus({ preventScroll: true });
+      } catch (error) {
+        // Safe to ignore focus issues.
+      }
+    }
+  }
+
+  function setupDraggableElement(target) {
+    if (!target) {
+      return;
+    }
+    const handle = target.querySelector('[data-drag-handle]') || target;
+    handle.addEventListener('pointerdown', function (event) {
+      if (event.button !== 0) {
+        return;
+      }
+      const origin = event.target instanceof HTMLElement ? event.target : null;
+      if (origin) {
+        if (origin.closest('[data-window-collapse]')) {
+          return;
+        }
+        if (isInteractiveElement(origin)) {
+          return;
+        }
+      }
+      event.preventDefault();
+      const current = windowPositions.get(target) || { x: 0, y: 0 };
+      const startX = current.x;
+      const startY = current.y;
+      const originX = event.clientX;
+      const originY = event.clientY;
+
+      function handlePointerMove(moveEvent) {
+        const dx = moveEvent.clientX - originX;
+        const dy = moveEvent.clientY - originY;
+        const nextX = startX + dx;
+        const nextY = startY + dy;
+        windowPositions.set(target, { x: nextX, y: nextY });
+        target.style.setProperty('--window-x', `${nextX}px`);
+        target.style.setProperty('--window-y', `${nextY}px`);
+      }
+
+      function endPointerInteraction() {
+        handle.classList.remove('is-dragging');
+        try {
+          handle.releasePointerCapture(event.pointerId);
+        } catch (error) {
+          // Ignore pointer capture release failures.
+        }
+        handle.removeEventListener('pointermove', handlePointerMove);
+        handle.removeEventListener('pointerup', endPointerInteraction);
+        handle.removeEventListener('pointercancel', endPointerInteraction);
+      }
+
+      handle.classList.add('is-dragging');
+      try {
+        handle.setPointerCapture(event.pointerId);
+      } catch (error) {
+        // Pointer capture may fail on unsupported browsers.
+      }
+      handle.addEventListener('pointermove', handlePointerMove);
+      handle.addEventListener('pointerup', endPointerInteraction);
+      handle.addEventListener('pointercancel', endPointerInteraction);
+    });
+  }
+
+  function setupWindow(windowEl) {
+    if (!windowEl) {
+      return;
+    }
+    windowZIndex += 1;
+    windowEl.style.setProperty('--window-layer', windowZIndex);
+    setupDraggableElement(windowEl);
+    updateWindowCollapseButton(windowEl, windowEl.classList.contains('is-collapsed'));
+
+    const collapseButton = windowEl.querySelector('[data-window-collapse]');
+    if (collapseButton) {
+      collapseButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleWindowCollapse(windowEl);
+      });
+
+      collapseButton.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' && event.key !== ' ') {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        toggleWindowCollapse(windowEl);
+      });
+    }
+
+    const header = windowEl.querySelector('[data-drag-handle]');
+    if (header) {
+      header.addEventListener('click', function (event) {
+        if (event.target.closest('[data-window-collapse]')) {
+          return;
+        }
+        if (windowEl.classList.contains('is-collapsed')) {
+          toggleWindowCollapse(windowEl, false);
+        }
+      });
+    }
+
+    windowEl.addEventListener('pointerdown', function (event) {
+      if (event.target.closest('[data-window-collapse]')) {
+        return;
+      }
+      const shouldFocus = !isInteractiveElement(event.target);
+      activateWindow(windowEl, shouldFocus);
+    });
+
+  }
+
+  function refreshThemeState(theme) {
+    themeChips.forEach(function (chip) {
+      const chipTheme = chip.dataset.theme;
+      chip.classList.toggle('is-active', Boolean(chipTheme) && chipTheme === theme);
+    });
+  }
+
+  function applyTheme(theme, skipPersist) {
+    const selectedTheme = theme || 'nebula';
+    body.dataset.theme = selectedTheme;
+    refreshThemeState(selectedTheme);
+    if (!skipPersist) {
+      setInStorage(THEME_STORAGE_KEY, selectedTheme);
+    }
+  }
+
+  function refreshScaleState(scaleValue) {
+    if (!Number.isFinite(scaleValue)) {
+      return;
+    }
+    scaleControls.forEach(function (control) {
+      const value = Number(control.dataset.scale);
+      const isMatch = Number.isFinite(value) && Math.abs(value - scaleValue) < 0.01;
+      control.classList.toggle('is-active', isMatch);
+    });
+  }
+
+  function applyViewportScale(scale, skipPersist) {
+    const numericScale = Number(scale);
+    if (!Number.isFinite(numericScale)) {
+      return;
+    }
+    const clamped = Math.min(1.1, Math.max(0.75, numericScale));
+    if (rootStyle) {
+      rootStyle.setProperty('--viewport-scale', clamped);
+    }
+    refreshScaleState(clamped);
+    if (!skipPersist) {
+      setInStorage(SCALE_STORAGE_KEY, String(clamped));
+    }
+  }
+
+  function openCommandPalette() {
+    if (!commandPalette || isPaletteOpen) {
+      return;
+    }
+    lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    commandPalette.hidden = false;
+    isPaletteOpen = true;
+    window.requestAnimationFrame(function () {
+      if (!commandList) {
+        return;
+      }
+      const firstCommand = commandList.querySelector('button');
+      if (firstCommand) {
+        firstCommand.focus();
+      }
+    });
+  }
+
+  function closeCommandPalette() {
+    if (!commandPalette || !isPaletteOpen) {
+      return;
+    }
+    commandPalette.hidden = true;
+    isPaletteOpen = false;
+    if (lastFocusedElement && typeof lastFocusedElement.focus === 'function') {
+      try {
+        lastFocusedElement.focus({ preventScroll: true });
+      } catch (error) {
+        // Ignore focus errors.
+      }
+    }
+    lastFocusedElement = null;
+  }
+
+  function toggleCommandPalette(forceOpen) {
+    if (forceOpen === true) {
+      openCommandPalette();
+      return;
+    }
+    if (forceOpen === false) {
+      closeCommandPalette();
+      return;
+    }
+    if (isPaletteOpen) {
+      closeCommandPalette();
+    } else {
+      openCommandPalette();
+    }
+  }
+
+  function handleCommand(command, trigger) {
+    if (!command) {
+      return;
+    }
+    let handled = false;
+    switch (command) {
+      case 'start-recording':
+        if (startBtn && !startBtn.disabled) {
+          startBtn.click();
+          handled = true;
+        }
+        break;
+      case 'stop-recording':
+        if (stopBtn && !stopBtn.disabled) {
+          stopBtn.click();
+          handled = true;
+        }
+        break;
+      case 'capture-photo':
+        if (snapshotBtn && !snapshotBtn.disabled) {
+          snapshotBtn.click();
+          handled = true;
+        }
+        break;
+      case 'open-controls':
+        if (controlsDrawer && window.bootstrap && window.bootstrap.Offcanvas) {
+          const drawerInstance = window.bootstrap.Offcanvas.getOrCreateInstance(controlsDrawer);
+          drawerInstance.show();
+          handled = true;
+        }
+        break;
+      case 'open-gallery': {
+        const galleryInstance = ensureGalleryModal();
+        if (galleryInstance) {
+          galleryInstance.show();
+          handled = true;
+        }
+        break;
+      }
+      case 'set-theme':
+        if (trigger) {
+          const themeName = trigger.dataset.theme;
+          if (themeName) {
+            applyTheme(themeName);
+            handled = true;
+          }
+        }
+        break;
+      case 'set-scale':
+        if (trigger) {
+          const scale = trigger.dataset.scale;
+          if (scale) {
+            applyViewportScale(Number(scale));
+            handled = true;
+          }
+        }
+        break;
+      default:
+        break;
+    }
+
+    const triggeredInsidePalette = Boolean(commandPalette && trigger && commandPalette.contains(trigger));
+    if (handled && triggeredInsidePalette) {
+      closeCommandPalette();
+    }
+  }
+
+  function isInteractiveElement(element) {
+    if (!element) {
+      return false;
+    }
+    if (element.isContentEditable) {
+      return true;
+    }
+    const tagName = element.tagName;
+    if (!tagName) {
+      return false;
+    }
+    if (tagName === 'INPUT') {
+      const inputType = element.type;
+      return (
+        inputType !== 'button' &&
+        inputType !== 'checkbox' &&
+        inputType !== 'radio' &&
+        inputType !== 'submit' &&
+        inputType !== 'reset' &&
+        inputType !== 'file'
+      );
+    }
+    if (tagName === 'BUTTON' || tagName === 'SELECT' || tagName === 'TEXTAREA') {
+      return true;
+    }
+    if (tagName === 'A') {
+      return element.hasAttribute('href');
+    }
+    return false;
+  }
+
+  overlayWindows.forEach(function (windowEl) {
+    setupWindow(windowEl);
+  });
+
+  if (commandSurface) {
+    setupDraggableElement(commandSurface);
+  }
+
+  if (commandPalette) {
+    commandPalette.addEventListener('click', function (event) {
+      if (event.target === commandPalette) {
+        closeCommandPalette();
+      }
+    });
+  }
+
+  const storedTheme = getFromStorage(THEME_STORAGE_KEY) || body.dataset.theme || 'nebula';
+  applyTheme(storedTheme, true);
+
+  const storedScale = Number.parseFloat(getFromStorage(SCALE_STORAGE_KEY));
+  if (Number.isFinite(storedScale)) {
+    applyViewportScale(storedScale, true);
+  } else {
+    const computedScaleValue = window
+      .getComputedStyle(document.documentElement)
+      .getPropertyValue('--viewport-scale');
+    const computedScale = Number.parseFloat(computedScaleValue);
+    if (Number.isFinite(computedScale)) {
+      refreshScaleState(computedScale);
+    }
+  }
+
+  commandButtons.forEach(function (button) {
+    button.addEventListener('click', function (event) {
+      const target = event.currentTarget;
+      handleCommand(target.dataset.command, target);
+    });
+  });
+
+  document.addEventListener('click', function (event) {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    if (!target) {
+      return;
+    }
+    const collapseTrigger = target.closest('[data-window-collapse]');
+    if (!collapseTrigger) {
+      return;
+    }
+    const windowEl = collapseTrigger.closest('[data-window]');
+    if (!windowEl) {
+      return;
+    }
+    event.preventDefault();
+    toggleWindowCollapse(windowEl);
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.defaultPrevented) {
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (target) {
+        const collapseTrigger = target.closest('[data-window-collapse]');
+        if (collapseTrigger) {
+          const windowEl = collapseTrigger.closest('[data-window]');
+          if (windowEl) {
+            event.preventDefault();
+            toggleWindowCollapse(windowEl);
+            return;
+          }
+        }
+      }
+    }
+    if (event.key === 'Enter' && !event.repeat) {
+      if (isInteractiveElement(event.target)) {
+        return;
+      }
+      if (activeWindow && activeWindow.classList.contains('is-collapsed')) {
+        toggleWindowCollapse(activeWindow, false);
+        activateWindow(activeWindow);
+        event.preventDefault();
+        return;
+      }
+      toggleCommandPalette(true);
+      event.preventDefault();
+      return;
+    }
+    if (event.key === 'Escape') {
+      if (isPaletteOpen) {
+        toggleCommandPalette(false);
+        event.preventDefault();
+        return;
+      }
+      if (activeWindow && !activeWindow.classList.contains('is-collapsed')) {
+        toggleWindowCollapse(activeWindow, true);
+        event.preventDefault();
+      }
+    }
+  });
 
   let socket;
   let reconnectTimer;
@@ -136,6 +630,7 @@
     : '';
   let snapshotBusy = false;
   let isGalleryLoading = false;
+  let galleryModalInstance;
   let videoModalInstance;
   let currentVideoName = '';
 
@@ -294,6 +789,19 @@
     });
   }
 
+  function ensureGalleryModal() {
+    if (!galleryModalEl || !window.bootstrap || !window.bootstrap.Modal) {
+      return null;
+    }
+    if (!galleryModalInstance) {
+      galleryModalInstance = window.bootstrap.Modal.getOrCreateInstance(galleryModalEl);
+      galleryModalEl.addEventListener('show.bs.modal', function () {
+        reopenGalleryAfterVideo = false;
+      });
+    }
+    return galleryModalInstance;
+  }
+
   function ensureVideoModal() {
     if (!videoModalEl || !window.bootstrap || !window.bootstrap.Modal) {
       return null;
@@ -325,6 +833,13 @@
           videoDownload.removeAttribute('download');
           videoDownload.classList.add('d-none');
         }
+        if (reopenGalleryAfterVideo) {
+          reopenGalleryAfterVideo = false;
+          const galleryInstance = ensureGalleryModal();
+          if (galleryInstance) {
+            galleryInstance.show();
+          }
+        }
       });
     }
     return videoModalInstance;
@@ -344,6 +859,12 @@
     const modal = ensureVideoModal();
     if (!modal || !videoPlayer) {
       return;
+    }
+
+    const galleryInstance = ensureGalleryModal();
+    if (galleryInstance && galleryModalEl && galleryModalEl.classList.contains('show')) {
+      reopenGalleryAfterVideo = true;
+      galleryInstance.hide();
     }
 
     const name = button.dataset.mediaName || 'Reproducción de video';
@@ -1239,7 +1760,7 @@
 
   function createControlElement(control) {
     const card = document.createElement('article');
-    card.className = 'control-card mb-3';
+    card.className = 'control-card';
     card.dataset.controlId = control.id;
 
     const header = document.createElement('div');
@@ -1259,7 +1780,7 @@
 
     const defaultButton = document.createElement('button');
     defaultButton.type = 'button';
-    defaultButton.className = 'btn btn-outline-light btn-sm';
+    defaultButton.className = 'btn btn-outline-light btn-sm control-reset';
     defaultButton.textContent = 'Restablecer';
     defaultButton.addEventListener('click', function () {
       sendControlUpdate(control.id, { action: 'default' });
@@ -1286,7 +1807,7 @@
     const normalizedType = (control.type || '').toLowerCase();
     if (normalizedType === 'bool' || normalizedType === 'boolean') {
       const formSwitch = document.createElement('div');
-      formSwitch.className = 'form-check form-switch mt-2';
+      formSwitch.className = 'form-check form-switch control-toggle';
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.className = 'form-check-input';
@@ -1309,7 +1830,7 @@
       normalizedType === 'integer menu'
     ) {
       const select = document.createElement('select');
-      select.className = 'form-select form-select-sm mt-2';
+      select.className = 'form-select form-select-sm control-select';
       if (Array.isArray(control.options)) {
         control.options.forEach(function (option) {
           const opt = document.createElement('option');
@@ -1343,7 +1864,7 @@
     ) {
       const range = document.createElement('input');
       range.type = 'range';
-      range.className = 'form-range mt-2';
+      range.className = 'form-range control-range';
       if (control.min !== null && control.min !== undefined) {
         range.min = control.min;
       }
@@ -1386,12 +1907,12 @@
       inputType = 'range';
     } else if (normalizedType === 'button') {
       const info = document.createElement('p');
-      info.className = 'text-muted small mt-2';
+      info.className = 'control-card-note';
       info.textContent = 'Este control solo es accionable desde el dispositivo físico.';
       bodySection.appendChild(info);
     } else {
       const fallback = document.createElement('p');
-      fallback.className = 'text-muted small mt-2';
+      fallback.className = 'control-card-note';
       fallback.textContent = 'Este tipo de control no es editable desde la interfaz.';
       bodySection.appendChild(fallback);
     }
