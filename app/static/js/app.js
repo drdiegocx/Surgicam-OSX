@@ -234,6 +234,24 @@
     setupDraggableElement(windowEl);
     updateWindowCollapseButton(windowEl, windowEl.classList.contains('is-collapsed'));
 
+    const collapseButton = windowEl.querySelector('[data-window-collapse]');
+    if (collapseButton) {
+      collapseButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleWindowCollapse(windowEl);
+      });
+
+      collapseButton.addEventListener('keydown', function (event) {
+        if (event.key !== 'Enter' && event.key !== ' ') {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        toggleWindowCollapse(windowEl);
+      });
+    }
+
     const header = windowEl.querySelector('[data-drag-handle]');
     if (header) {
       header.addEventListener('click', function (event) {
