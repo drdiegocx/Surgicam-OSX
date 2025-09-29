@@ -23,6 +23,10 @@ class Settings:
         os.getenv("MINIDVR_SNAPSHOTS_DIR", RECORDINGS_DIR / "photos")
     )
 
+    COMMANDS_FILE: Path = Path(
+        os.getenv("MINIDVR_COMMANDS_FILE", BASE_DIR / "config" / "commands.json")
+    )
+
     APP_HOST: str = os.getenv("MINIDVR_APP_HOST", "0.0.0.0")
     APP_PORT: int = int(os.getenv("MINIDVR_APP_PORT", 8080))
 
