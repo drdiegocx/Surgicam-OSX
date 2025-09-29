@@ -184,6 +184,15 @@
       if (event.button !== 0) {
         return;
       }
+      const origin = event.target instanceof HTMLElement ? event.target : null;
+      if (origin) {
+        if (origin.closest('[data-window-collapse]')) {
+          return;
+        }
+        if (isInteractiveElement(origin)) {
+          return;
+        }
+      }
       event.preventDefault();
       const current = windowPositions.get(target) || { x: 0, y: 0 };
       const startX = current.x;
