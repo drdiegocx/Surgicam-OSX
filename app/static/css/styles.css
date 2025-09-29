@@ -660,10 +660,10 @@ main.workspace-grid {
 }
 
 .app-drawer .offcanvas-body {
-  padding: 1.25rem 1.5rem 1.5rem;
+  padding: 1.2rem 1.35rem 1.35rem;
   display: flex;
   flex-direction: column;
-  gap: 1.1rem;
+  gap: 0.85rem;
 }
 
 .drawer-loading {
@@ -678,6 +678,10 @@ main.workspace-grid {
   border-bottom: none;
   padding-bottom: 0.35rem;
   flex-wrap: wrap;
+}
+
+.app-drawer .nav-tabs .nav-item {
+  margin: 0;
 }
 
 .app-drawer .nav-tabs .nav-link {
@@ -743,6 +747,175 @@ main.workspace-grid {
   background: var(--accent-soft);
   border-color: var(--accent-strong);
   color: var(--text-primary);
+}
+
+.control-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.15rem;
+  margin-bottom: 1rem;
+  background: var(--surface-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.control-card:last-child {
+  margin-bottom: 0;
+}
+
+.control-card:hover,
+.control-card:focus-within {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 1px var(--accent-soft), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.control-card.control-updating {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 2px var(--accent-soft), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.control-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.control-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.control-card-title .name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.control-card-title .type {
+  margin: 0;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.control-card-summary {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.control-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.control-reset {
+  white-space: nowrap;
+  border-radius: 999px;
+  border-color: var(--border-soft);
+  padding: 0.25rem 0.85rem;
+}
+
+.control-reset:focus-visible {
+  outline: none;
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 0.15rem var(--accent-shadow);
+}
+
+.control-toggle {
+  padding: 0.2rem 0.35rem 0.2rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.control-toggle .form-check-input {
+  width: 2.25rem;
+  height: 1.1rem;
+  margin-top: 0;
+  cursor: pointer;
+}
+
+.control-toggle .form-check-input:focus {
+  box-shadow: 0 0 0 0.15rem var(--accent-shadow);
+  border-color: var(--accent-strong);
+}
+
+.control-toggle .form-check-label {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.control-select {
+  background: var(--surface-muted);
+  border-radius: 0.85rem;
+  border-color: var(--border-soft);
+  color: var(--text-primary);
+  padding-inline: 0.85rem;
+  min-height: 2.4rem;
+}
+
+.control-select:focus {
+  border-color: var(--accent-strong);
+  box-shadow: 0 0 0 0.15rem var(--accent-shadow);
+}
+
+.control-range {
+  accent-color: var(--accent-strong);
+}
+
+.control-card-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  padding: 0.65rem 0.8rem;
+}
+
+.control-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.75rem, 1fr));
+  gap: 0.6rem;
+  padding: 0.75rem;
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+}
+
+.control-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.control-meta-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+}
+
+.control-meta-value {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  word-break: break-word;
 }
 
 .media-grid {

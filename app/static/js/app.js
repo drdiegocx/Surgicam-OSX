@@ -1760,7 +1760,7 @@
 
   function createControlElement(control) {
     const card = document.createElement('article');
-    card.className = 'control-card mb-3';
+    card.className = 'control-card';
     card.dataset.controlId = control.id;
 
     const header = document.createElement('div');
@@ -1780,7 +1780,7 @@
 
     const defaultButton = document.createElement('button');
     defaultButton.type = 'button';
-    defaultButton.className = 'btn btn-outline-light btn-sm';
+    defaultButton.className = 'btn btn-outline-light btn-sm control-reset';
     defaultButton.textContent = 'Restablecer';
     defaultButton.addEventListener('click', function () {
       sendControlUpdate(control.id, { action: 'default' });
@@ -1807,7 +1807,7 @@
     const normalizedType = (control.type || '').toLowerCase();
     if (normalizedType === 'bool' || normalizedType === 'boolean') {
       const formSwitch = document.createElement('div');
-      formSwitch.className = 'form-check form-switch mt-2';
+      formSwitch.className = 'form-check form-switch control-toggle';
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.className = 'form-check-input';
@@ -1830,7 +1830,7 @@
       normalizedType === 'integer menu'
     ) {
       const select = document.createElement('select');
-      select.className = 'form-select form-select-sm mt-2';
+      select.className = 'form-select form-select-sm control-select';
       if (Array.isArray(control.options)) {
         control.options.forEach(function (option) {
           const opt = document.createElement('option');
@@ -1864,7 +1864,7 @@
     ) {
       const range = document.createElement('input');
       range.type = 'range';
-      range.className = 'form-range mt-2';
+      range.className = 'form-range control-range';
       if (control.min !== null && control.min !== undefined) {
         range.min = control.min;
       }
@@ -1907,12 +1907,12 @@
       inputType = 'range';
     } else if (normalizedType === 'button') {
       const info = document.createElement('p');
-      info.className = 'text-muted small mt-2';
+      info.className = 'control-card-note';
       info.textContent = 'Este control solo es accionable desde el dispositivo físico.';
       bodySection.appendChild(info);
     } else {
       const fallback = document.createElement('p');
-      fallback.className = 'text-muted small mt-2';
+      fallback.className = 'control-card-note';
       fallback.textContent = 'Este tipo de control no es editable desde la interfaz.';
       bodySection.appendChild(fallback);
     }
