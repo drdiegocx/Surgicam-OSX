@@ -1,0 +1,5 @@
+{
+  "ustreamer": "ustreamer --device={ustreamer_device} --format=MJPEG --encoder=CPU --resolution={ustreamer_resolution} --desired-fps={ustreamer_fps} --allow-origin=* --host {ustreamer_host} --port {ustreamer_port} --persistent --tcp-nodelay --image-default --buffers=4 --workers=4 --verbose --io-method=MMAP --min-frame-size=64",
+  "ffmpeg": "ffmpeg -hide_banner -loglevel {ffmpeg_loglevel} -fflags nobuffer -flags low_delay -tcp_nodelay 1 -f mpjpeg -i {ffmpeg_url} -map 0:v{filter_clause}{encoder_clause}{preset_clause}{tune_clause}{crf_clause}{pixel_format_clause} -f segment -segment_time {ffmpeg_segment_seconds} -segment_atclocktime 1 -reset_timestamps 1 -movflags +faststart -strftime 1 {segment_pattern}"
+}
+

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .config import settings
+from .command_templates import command_templates
 
 logger = logging.getLogger("mini_dvr")
 
@@ -132,27 +133,14 @@ class RecorderManager:
     async def ensure_preview(self) -> None:
         if self.is_preview_running:
             return
-        command = [
-            "ustreamer",
-            f"--device={settings.USTREAMER_DEVICE}",
-            "--format=MJPEG",
-            "--encoder=CPU",
-            f"--resolution={settings.USTREAMER_RESOLUTION}",
-            f"--desired-fps={settings.USTREAMER_FPS}",
-            "--allow-origin=*",
-            "--host",
-            settings.USTREAMER_HOST,
-            "--port",
-            str(settings.USTREAMER_PORT),
-            "--persistent",
-            "--tcp-nodelay",
-            "--image-default",
-            "--buffers=4",
-            "--workers=4",
-            "--verbose",
-            "--io-method=MMAP",
-            "--min-frame-size=64",
-        ]
+        command_context = {
+            "ustreamer_device": settings.USTREAMER_DEVICE,
+            "ustreamer_resolution": settings.USTREAMER_RESOLUTION,
+            "ustreamer_fps": settings.USTREAMER_FPS,
+            "ustreamer_host": settings.USTREAMER_HOST,
+            "ustreamer_port": settings.USTREAMER_PORT,
+        }
+        command = command_templates.render("ustreamer", command_context)
         logger.info("Iniciando uStreamer con comando: %s", " ".join(command))
         try:
             self._ustreamer_process = subprocess.Popen(
@@ -214,25 +202,6 @@ class RecorderManager:
     def _build_ffmpeg_command(
         self, segment_pattern: str, roi: Optional[Roi]
     ) -> Tuple[list[str], Optional[Tuple[int, int, int, int]]]:
-        command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            settings.FFMPEG_LOGLEVEL,
-            "-fflags",
-            "nobuffer",
-            "-flags",
-            "low_delay",
-            "-tcp_nodelay",
-            "1",
-            "-f",
-            "mpjpeg",
-            "-i",
-            settings.FFMPG_URL,
-            "-map",
-            "0:v",
-        ]
-
         filters = []
         crop_box: Optional[Tuple[int, int, int, int]] = None
         if roi and not roi.is_full_frame():
@@ -243,45 +212,38 @@ class RecorderManager:
         if settings.FFMPEG_SCALE_WIDTH:
             filters.append(f"scale={settings.FFMPEG_SCALE_WIDTH}:-1")
 
-        if filters:
-            command.extend(["-vf", ",".join(filters)])
-
         encoder = settings.FFMPEG_ENCODER or "libx264"
-        command.extend(["-c:v", encoder])
-
         preset = settings.FFMPEG_PRESET
-        if preset:
-            command.extend(["-preset", preset])
-
         tune = settings.FFMPEG_TUNE
-        if encoder == "libx264" and tune:
-            command.extend(["-tune", tune])
-
         crf = settings.FFMPEG_CRF
-        if encoder == "libx264" and crf is not None:
-            command.extend(["-crf", str(crf)])
-
         pixel_format = settings.FFMPEG_PIXEL_FORMAT
-        if pixel_format:
-            command.extend(["-pix_fmt", pixel_format])
+        filter_clause = ""
+        if filters:
+            filter_clause = f' -vf "{",".join(filters)}"'
 
-        command.extend(
-            [
-                "-f",
-                "segment",
-                "-segment_time",
-                str(settings.FFMPG_SEGMENT_SECONDS),
-                "-segment_atclocktime",
-                "1",
-                "-reset_timestamps",
-                "1",
-                "-movflags",
-                "+faststart",
-                "-strftime",
-                "1",
-                segment_pattern,
-            ]
-        )
+        encoder_clause = f" -c:v {encoder}" if encoder else ""
+        preset_clause = f" -preset {preset}" if preset else ""
+        tune_clause = ""
+        if encoder == "libx264" and tune:
+            tune_clause = f" -tune {tune}"
+        crf_clause = ""
+        if encoder == "libx264" and crf is not None:
+            crf_clause = f" -crf {crf}"
+        pixel_format_clause = f" -pix_fmt {pixel_format}" if pixel_format else ""
+
+        command_context = {
+            "ffmpeg_loglevel": settings.FFMPEG_LOGLEVEL,
+            "ffmpeg_url": settings.FFMPG_URL,
+            "filter_clause": filter_clause,
+            "encoder_clause": encoder_clause,
+            "preset_clause": preset_clause,
+            "tune_clause": tune_clause,
+            "crf_clause": crf_clause,
+            "pixel_format_clause": pixel_format_clause,
+            "ffmpeg_segment_seconds": settings.FFMPG_SEGMENT_SECONDS,
+            "segment_pattern": segment_pattern,
+        }
+        command = command_templates.render("ffmpeg", command_context)
         return command, crop_box
 
     async def start_recording(self, roi: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

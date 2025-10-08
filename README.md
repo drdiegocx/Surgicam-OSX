@@ -161,6 +161,13 @@ ffmpeg -hide_banner -loglevel warning \
 
 Si se aplica un ROI, el filtro `crop` se inserta antes de la escala manteniendo la misma tubería de codificación.
 
+## Configuración de comandos externos
+
+- El archivo `config/commands.json` define las plantillas de línea de comandos que se usan para iniciar **uStreamer** y **FFmpeg**.
+- Cada cadena admite *placeholders* como `{ustreamer_device}` o `{ffmpeg_url}` que se rellenan con los valores actuales antes de ejecutar el proceso.
+- Ajusta el JSON para añadir o quitar argumentos según tu hardware; deja los campos vacíos si no necesitas un bloque concreto.
+- Para utilizar un archivo alternativo exporta `MINIDVR_COMMANDS_FILE=/ruta/a/mi_comandos.json` antes de iniciar la aplicación.
+
 ## ROI sincronizado con las grabaciones
 
 - Al presionar **Iniciar grabación**, el navegador envía el ROI normalizado (posición, ancho, alto y zoom) junto con el comando.
